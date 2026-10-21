@@ -1,6 +1,9 @@
 import { PGlite } from "@electric-sql/pglite";
-import { drizzle } from "drizzle-orm/pglite";
-import { migrate } from "drizzle-orm/pglite/migrator";
+import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
+import { migrate as migratePglite } from "drizzle-orm/pglite/migrator";
+import { drizzle as drizzlePostgres } from "drizzle-orm/postgres-js";
+import { migrate as migratePostgres } from "drizzle-orm/postgres-js/migrator";
+import postgres from "postgres";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -13,38 +16,89 @@ import { authorizeOrg, loadActor, type Actor, type OrgContext } from "@/lib/auth
 
 export const TEST_PASSWORD = "CorrectHorse9!";
 
-type GlobalWithDb = { __biDb?: { db?: AppDb; client?: PGlite } };
-
 const migrationsFolder = path.resolve(process.cwd(), "drizzle");
+
+type GlobalWithDb = { __biDb?: { db?: AppDb; client?: unknown } };
 
 export type TestContext = {
   db: AppDb;
-  client: PGlite;
+  driver: "pglite" | "postgres";
   uploadDir: string;
   cleanup: () => Promise<void>;
 };
 
-export async function createTestContext(): Promise<TestContext> {
-  const client = new PGlite();
-  const db = drizzle(client, { schema }) as unknown as AppDb;
-  await migrate(db as never, { migrationsFolder });
+let pgCounter = 0;
 
+/**
+ * Creates an isolated database for a test file.
+ *
+ * - Default: in-memory PGlite (fast, no external service).
+ * - TEST_DATABASE_URL: creates and migrates a throwaway PostgreSQL database,
+ *   so the exact same suites can prove PostgreSQL compatibility.
+ */
+export async function createTestContext(): Promise<TestContext> {
   const uploadDir = mkdtempSync(path.join(tmpdir(), "bi-docs-"));
   process.env.UPLOAD_DIR = uploadDir;
   process.env.MAX_UPLOAD_BYTES = String(2 * 1024 * 1024);
-  delete process.env.DATABASE_URL;
 
-  // Route handlers call getDb(); point the process-wide handle at this test DB.
+  const pgAdminUrl = process.env.TEST_DATABASE_URL;
+  const context = pgAdminUrl ? await createPostgresContext(pgAdminUrl) : await createPgliteContext();
+  return {
+    ...context,
+    uploadDir,
+    cleanup: async () => {
+      await context.cleanup();
+      rmSync(uploadDir, { recursive: true, force: true });
+    },
+  };
+}
+
+async function createPgliteContext(): Promise<Omit<TestContext, "uploadDir" | "cleanup"> & { cleanup: () => Promise<void> }> {
+  const client = new PGlite();
+  const db = drizzlePglite(client, { schema }) as unknown as AppDb;
+  await migratePglite(db as never, { migrationsFolder });
   (globalThis as unknown as GlobalWithDb).__biDb = { db, client };
-
   return {
     db,
-    client,
-    uploadDir,
+    driver: "pglite",
     cleanup: async () => {
       await client.close();
       (globalThis as unknown as GlobalWithDb).__biDb = undefined;
-      rmSync(uploadDir, { recursive: true, force: true });
+    },
+  };
+}
+
+async function createPostgresContext(
+  adminUrl: string,
+): Promise<Omit<TestContext, "uploadDir" | "cleanup"> & { cleanup: () => Promise<void> }> {
+  const base = new URL(adminUrl);
+  const databaseName = `bi_test_${process.pid}_${Date.now()}_${(pgCounter += 1)}`;
+  const admin = postgres(adminUrl, { max: 1, onnotice: () => {} });
+  await admin.unsafe(`create database "${databaseName}"`);
+
+  const target = new URL(adminUrl);
+  target.pathname = `/${databaseName}`;
+  const client = postgres(target.toString(), { max: 5, onnotice: () => {} });
+  const db = drizzlePostgres(client, { schema }) as unknown as AppDb;
+
+  try {
+    await migratePostgres(db as never, { migrationsFolder });
+  } catch (error) {
+    await client.end().catch(() => undefined);
+    await admin.unsafe(`drop database if exists "${databaseName}" with (force)`).catch(() => undefined);
+    await admin.end().catch(() => undefined);
+    throw error;
+  }
+
+  (globalThis as unknown as GlobalWithDb).__biDb = { db, client };
+  return {
+    db,
+    driver: "postgres",
+    cleanup: async () => {
+      (globalThis as unknown as GlobalWithDb).__biDb = undefined;
+      await client.end().catch(() => undefined);
+      await admin.unsafe(`drop database if exists "${databaseName}" with (force)`).catch(() => undefined);
+      await admin.end().catch(() => undefined);
     },
   };
 }

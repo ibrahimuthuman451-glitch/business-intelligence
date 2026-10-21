@@ -48,8 +48,11 @@ describe("migrations", () => {
   it("creates every required table on a fresh database", async () => {
     const result = (await context.db.execute(
       sql`select table_name from information_schema.tables where table_schema = 'public'`,
-    )) as unknown as { rows: { table_name: string }[] };
-    const names = result.rows.map((row) => row.table_name);
+    )) as unknown;
+    const rows = Array.isArray(result)
+      ? (result as { table_name: string }[])
+      : ((result as { rows: { table_name: string }[] }).rows ?? []);
+    const names = rows.map((row) => row.table_name);
     for (const table of REQUIRED_TABLES) expect(names).toContain(table);
   });
 
