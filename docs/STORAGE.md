@@ -69,3 +69,11 @@ monitor its availability.
 - Restore order: database first, then objects. Verify with `npm run storage:audit`
   and a sample authorized download.
 - Test restoration quarterly and record the result.
+
+## Supabase Storage / R2 compatibility
+
+Supabase Storage and Cloudflare R2 do **not** implement the SSE
+`x-amz-server-side-encryption` header. Leave `S3_SERVER_SIDE_ENCRYPTION` empty for those
+providers. AWS S3 encrypts new objects by default, so the header is optional there as well.
+Supabase Storage uses path-style access (`S3_FORCE_PATH_STYLE=true`) and the endpoint
+`https://<project-ref>.storage.supabase.co/storage/v1/s3`.

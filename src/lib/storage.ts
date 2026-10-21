@@ -21,7 +21,9 @@ export function uploadRoot(): string {
 
 export function maxUploadBytes(): number {
   const configured = Number(process.env.MAX_UPLOAD_BYTES ?? 10 * 1024 * 1024);
-  return Number.isFinite(configured) && configured > 0 ? configured : 10 * 1024 * 1024;
+  const value = Number.isFinite(configured) && configured > 0 ? configured : 10 * 1024 * 1024;
+  // Vercel Functions cap request bodies at 4.5 MB; leave room for multipart overhead.
+  return process.env.VERCEL ? Math.min(value, 4 * 1024 * 1024) : value;
 }
 
 export function extensionOf(filename: string): string {
@@ -180,8 +182,18 @@ export function storageDriverName(): "local" | "s3" {
   return (process.env.STORAGE_DRIVER ?? "local").toLowerCase() === "s3" ? "s3" : "local";
 }
 
+/** Vercel/serverless filesystems are ephemeral, so local storage is refused there. */
+export function storageConfigurationProblem(): string | null {
+  if (process.env.VERCEL && storageDriverName() !== "s3") {
+    return "Serverless deployment requires STORAGE_DRIVER=s3 with private object storage";
+  }
+  return null;
+}
+
 export function getStorageDriver(): StorageDriver {
   if (override) return override;
+  const problem = storageConfigurationProblem();
+  if (problem) throw new AppError(problem, 500, "storage_misconfigured");
   if (storageDriverName() === "local") return localDriver;
   const bucket = process.env.S3_BUCKET?.trim();
   const region = process.env.S3_REGION?.trim();
@@ -197,6 +209,7 @@ export function getStorageDriver(): StorageDriver {
     secretAccessKey,
     endpoint: process.env.S3_ENDPOINT?.trim() || undefined,
     forcePathStyle: (process.env.S3_FORCE_PATH_STYLE ?? "true") !== "false",
+    serverSideEncryption: process.env.S3_SERVER_SIDE_ENCRYPTION?.trim() || null,
   });
 }
 

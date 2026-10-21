@@ -13,7 +13,7 @@ import path from "node:path";
 import { mkdirSync } from "node:fs";
 
 const folder = path.resolve(process.cwd(), "drizzle");
-const url = process.env.DATABASE_URL?.trim();
+const url = process.env.MIGRATION_DATABASE_URL?.trim() || process.env.DATABASE_URL?.trim();
 
 async function main() {
   if (url) {

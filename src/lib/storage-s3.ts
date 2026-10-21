@@ -15,6 +15,8 @@ export type S3Config = {
   accessKeyId: string;
   secretAccessKey: string;
   forcePathStyle?: boolean;
+  /** Optional. Supabase/R2 reject the SSE header; AWS encrypts by default. */
+  serverSideEncryption?: string | null;
 };
 
 /**
@@ -26,13 +28,17 @@ export class S3StorageDriver implements StorageDriver {
   readonly name = "s3";
   private readonly client: S3Client;
   private readonly bucket: string;
+  private readonly serverSideEncryption: string | null;
 
   constructor(config: S3Config) {
     this.bucket = config.bucket;
+    this.serverSideEncryption = config.serverSideEncryption?.trim() || null;
     this.client = new S3Client({
       region: config.region,
       endpoint: config.endpoint,
       forcePathStyle: config.forcePathStyle ?? true,
+      // Supabase/R2 do not implement all checksum headers; only send when required.
+      requestChecksumCalculation: "WHEN_REQUIRED",
       credentials: {
         accessKeyId: config.accessKeyId,
         secretAccessKey: config.secretAccessKey,
@@ -48,7 +54,9 @@ export class S3StorageDriver implements StorageDriver {
           Key: key,
           Body: bytes,
           ContentType: contentType,
-          ServerSideEncryption: "AES256",
+          ...(this.serverSideEncryption
+            ? { ServerSideEncryption: this.serverSideEncryption as "AES256" }
+            : {}),
         }),
       );
     } catch (error) {

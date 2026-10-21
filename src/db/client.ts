@@ -35,7 +35,10 @@ export function getDb(): AppDb {
     throw new Error("DATABASE_URL is required in production; refusing to use embedded PGlite");
   }
   if (url) {
-    const client = postgres(url, { max: 10, onnotice: () => {} });
+    const configuredMax = Number(process.env.DATABASE_POOL_MAX ?? 10);
+    const max = Number.isFinite(configuredMax) && configuredMax > 0 ? Math.min(configuredMax, 20) : 10;
+    const prepare = process.env.DATABASE_PREPARE !== "false";
+    const client = postgres(url, { max, prepare, onnotice: () => {} });
     const db = drizzlePostgres(client, { schema }) as unknown as AppDb;
     globalForDb.__biDb = { db };
     return db;

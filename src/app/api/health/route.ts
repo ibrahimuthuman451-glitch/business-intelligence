@@ -5,7 +5,7 @@ import { emailOutboxStatus } from "@/lib/email/outbox";
 import { scannerConfigured } from "@/lib/malware";
 import { mfaEncryptionConfigured } from "@/lib/mfa/crypto";
 import { mfaRequiredRoles } from "@/lib/mfa/policy";
-import { storageDriverName } from "@/lib/storage";
+import { storageConfigurationProblem, storageDriverName } from "@/lib/storage";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +18,7 @@ export async function GET() {
       status: "ok",
       database: "reachable",
       storage: storageDriverName(),
+      storageReady: storageConfigurationProblem() === null,
       malwareScanner: scannerConfigured() ? "configured" : "not_configured",
       mfa: {
         encryptionConfigured: mfaEncryptionConfigured(),

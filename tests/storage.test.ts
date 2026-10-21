@@ -34,6 +34,7 @@ afterEach(() => {
   delete process.env.CLAMAV_HOST;
   delete process.env.CLAMAV_PORT;
   delete process.env.STORAGE_DRIVER;
+  delete process.env.VERCEL;
 });
 
 afterAll(async () => {
@@ -152,6 +153,12 @@ describe("storage abstraction", () => {
     ).rejects.toMatchObject({ code: "storage_unavailable" });
     const rows = await context.db.select().from(documents).where(eq(documents.orgId, org.orgId));
     expect(rows).toHaveLength(0);
+  });
+
+  it("refuses ephemeral local storage on Vercel", () => {
+    process.env.VERCEL = "1";
+    process.env.STORAGE_DRIVER = "local";
+    expect(() => getStorageDriver()).toThrow(/requires STORAGE_DRIVER=s3/i);
   });
 
   it("requires explicit S3 configuration instead of falling back silently", () => {

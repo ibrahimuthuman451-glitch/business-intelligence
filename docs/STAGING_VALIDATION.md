@@ -21,8 +21,8 @@ verified against an external provider.
 | Check | Result |
 | --- | --- |
 | PostgreSQL migrations (0000–0002) from empty DB | passed |
-| Full suite on PostgreSQL | **132/132 passed (18 files)** |
-| Full suite on PGlite | **126 passed, 6 PostgreSQL-only skipped** |
+| Full suite on PostgreSQL | **133/133 passed (18 files)** |
+| Full suite on PGlite | **127 passed, 6 PostgreSQL-only skipped** |
 | SMTP authentication + delivery over real SMTP | **4/4 tests passed**; `verify:smtp` accepted |
 | SMTP wrong password classified permanent | passed |
 | SMTP unreachable classified transient | passed |

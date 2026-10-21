@@ -169,6 +169,8 @@ Known risks and pilot blockers are documented in `docs/SECURITY.md`.
 - `docs/MFA.md` — enrollment, recovery, policy and key management
 - `docs/STAGING_VALIDATION.md` — actual staging/SMTP/S3/ClamAV/backup results
 - `docs/CI.md` — enabling the CI workflow (permission steps)
+- `docs/HOSTING_OPTIONS.md` — verified free/paid hosting comparison
+- `docs/DEPLOYMENT_LOW_COST.md` — Windows Vercel + Supabase deployment guide
 - `docs/DEMO.md` — 16-step customer demonstration and safe reset
 - `docs/INTEGRATIONS.md` — tender/EBM scope and synthetic fixture formats
 - `docs/SECURITY.md` — threat model and remaining risks
