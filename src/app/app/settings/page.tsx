@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { businessProfiles, organizations } from "@/db/schema";
@@ -8,6 +9,7 @@ import { Alert, Badge, PageHeader } from "@/components/ui";
 import { changePasswordAction, createOrganizationAction, updateProfileAction } from "../actions";
 import { serviceUnavailable } from "@/lib/page-guards";
 import { entitlementSnapshot } from "@/lib/entitlements";
+import { getMfaStatus } from "@/lib/mfa/service";
 
 export const metadata: Metadata = { title: "Settings" };
 export const dynamic = "force-dynamic";
@@ -21,6 +23,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     const [profile] = await db.select().from(businessProfiles).where(eq(businessProfiles.orgId, org.orgId)).limit(1);
     const [organization] = await db.select().from(organizations).where(eq(organizations.id, org.orgId)).limit(1);
     const snapshot = await entitlementSnapshot(db, org.orgId);
+    const mfaStatus = await getMfaStatus(db, actor.user.id);
     return (
       <>
         <PageHeader eyebrow={org.orgName} title="Settings" description="Business profile, tender matching signals and account security." />
@@ -59,6 +62,34 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
                   <dt>Organization type</dt><dd>{organization?.kind ?? "business"}</dd>
                   <dt>Member since</dt><dd>{formatDate(organization?.createdAt)}</dd>
                 </dl>
+              </div>
+            </div>
+            <div className="card">
+              <div className="card-head">
+                <h2>Two-step verification</h2>
+                <Badge value={mfaStatus.enabled ? "active" : "pending"} label={mfaStatus.enabled ? "enabled" : "not enabled"} />
+              </div>
+              <div className="card-pad">
+                <p className="small muted">
+                  Use an authenticator app (TOTP) in addition to your password. Recovery codes are
+                  issued once at enrollment and can each be used one time.
+                </p>
+                {mfaStatus.requiredByPolicy ? (
+                  <p className="tiny" style={{ color: "var(--amber)" }}>Required for your role.</p>
+                ) : null}
+                {mfaStatus.enabled ? (
+                  <p className="tiny muted">{mfaStatus.recoveryCodesRemaining} recovery code(s) remaining.</p>
+                ) : null}
+                <div className="row">
+                  {!mfaStatus.enabled ? (
+                    <Link className="btn secondary" href="/mfa/setup">Set up MFA</Link>
+                  ) : mfaStatus.requiredByPolicy ? null : (
+                    <Link className="btn secondary" href="/mfa/disable">Disable MFA</Link>
+                  )}
+                </div>
+                {!mfaStatus.available ? (
+                  <p className="tiny" style={{ color: "var(--red)" }}>MFA is unavailable until the server encryption key is configured.</p>
+                ) : null}
               </div>
             </div>
             <div className="card">

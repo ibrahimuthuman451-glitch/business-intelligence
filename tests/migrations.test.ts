@@ -46,6 +46,8 @@ const REQUIRED_TABLES = [
   "rate_limits",
   "notification_preferences",
   "job_runs",
+  "mfa_recovery_codes",
+  "mfa_challenges",
 ];
 
 describe("migrations", () => {

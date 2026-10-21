@@ -9,3 +9,5 @@ install.log
 .pgdata/
 tsconfig.tsbuildinfo
 *.tsbuildinfo
+.clamav/
+.pgclient/

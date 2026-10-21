@@ -20,6 +20,7 @@ export default async function AdminPage() {
   const actor = await getCurrentActor();
   if (!actor) redirect("/login?next=/admin");
   if (!actor.user.isPlatformAdmin) redirect("/no-access?reason=forbidden");
+  if (actor.mfaRequired && !actor.user.mfaEnabled) redirect("/mfa/setup");
 
   const rows = await getDb()
     .select({

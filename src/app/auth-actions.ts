@@ -22,9 +22,13 @@ import {
   safeNextPath,
 } from "@/lib/request";
 import {
+  clearMfaChallengeCookie,
+  clearMfaEnrollCookie,
   clearSessionCookie,
   readSessionToken,
   setActiveOrgCookie,
+  setMfaChallengeCookie,
+  setMfaEnrollCookie,
   setSessionCookie,
 } from "@/lib/session-cookie";
 import { getCurrentActor } from "@/lib/current-user";
@@ -36,6 +40,8 @@ import { hashToken, normalizeEmail, randomToken } from "@/lib/ids";
 import { recordAuditSafe } from "@/lib/audit";
 import { AppError } from "@/lib/errors";
 import { logServerError } from "@/lib/logger";
+import { mfaEncryptionConfigured } from "@/lib/mfa/crypto";
+import { createMfaChallenge, userRequiresMfa } from "@/lib/mfa/service";
 
 function str(form: FormData, key: string): string {
   const value = form.get(key);
@@ -43,7 +49,8 @@ function str(form: FormData, key: string): string {
 }
 
 function fail(path: string, error: unknown): never {
-  redirect(`${path}?error=${encodeURIComponent(describeError(error))}`);
+  const message = typeof error === "string" ? error : describeError(error);
+  redirect(`${path}?error=${encodeURIComponent(message)}`);
 }
 
 function deliveryNotice(status: string, subject: string): string {
@@ -61,14 +68,51 @@ export async function loginAction(formData: FormData): Promise<void> {
 
   if (!email || !password) fail("/login", "Enter your email and password");
 
+  let destination = next;
   try {
     const user = await authenticate(db, email, password, meta);
-    const session = await createSession(db, user.id, meta);
-    await setSessionCookie(session.token, session.expiresAt);
+
+    if (user.mfaEnabled) {
+      if (!mfaEncryptionConfigured()) {
+        throw new AppError(
+          "MFA is temporarily unavailable because the server encryption key is not configured.",
+          503,
+          "mfa_not_configured",
+        );
+      }
+      const challenge = await createMfaChallenge(db, {
+        userId: user.id,
+        purpose: "login",
+        nextPath: next,
+        ipAddress: meta.ipAddress,
+      });
+      await setMfaChallengeCookie(challenge.token, challenge.expiresAt);
+      destination = "/mfa";
+    } else if (await userRequiresMfa(db, user.id)) {
+      if (!mfaEncryptionConfigured()) {
+        throw new AppError(
+          "Multi-factor authentication is required but is not configured on this server. Contact the operator.",
+          503,
+          "mfa_not_configured",
+        );
+      }
+      const challenge = await createMfaChallenge(db, {
+        userId: user.id,
+        purpose: "enroll",
+        nextPath: next,
+        ipAddress: meta.ipAddress,
+        ttlSeconds: 600,
+      });
+      await setMfaEnrollCookie(challenge.token, challenge.expiresAt);
+      destination = "/mfa/setup?required=1";
+    } else {
+      const session = await createSession(db, user.id, meta);
+      await setSessionCookie(session.token, session.expiresAt);
+    }
   } catch (error) {
     fail(`/login?next=${encodeURIComponent(next)}`, error);
   }
-  redirect(next);
+  redirect(destination);
 }
 
 export async function registerAction(formData: FormData): Promise<void> {
@@ -128,6 +172,8 @@ export async function logoutAction(): Promise<void> {
   const token = await readSessionToken();
   if (token) await revokeSession(getDb(), token);
   await clearSessionCookie();
+  await clearMfaChallengeCookie();
+  await clearMfaEnrollCookie();
   redirect("/login?ok=" + encodeURIComponent("You have been signed out."));
 }
 

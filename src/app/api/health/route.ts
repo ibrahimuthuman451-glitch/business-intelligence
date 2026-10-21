@@ -3,6 +3,8 @@ import { getDb } from "@/db/client";
 import { emailTransportMode, isEmailConfigured } from "@/lib/email";
 import { emailOutboxStatus } from "@/lib/email/outbox";
 import { scannerConfigured } from "@/lib/malware";
+import { mfaEncryptionConfigured } from "@/lib/mfa/crypto";
+import { mfaRequiredRoles } from "@/lib/mfa/policy";
 import { storageDriverName } from "@/lib/storage";
 
 export const dynamic = "force-dynamic";
@@ -17,6 +19,10 @@ export async function GET() {
       database: "reachable",
       storage: storageDriverName(),
       malwareScanner: scannerConfigured() ? "configured" : "not_configured",
+      mfa: {
+        encryptionConfigured: mfaEncryptionConfigured(),
+        requiredRoles: [...mfaRequiredRoles()],
+      },
       email: {
         transport: emailTransportMode(),
         configured: isEmailConfigured(),

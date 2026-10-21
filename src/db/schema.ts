@@ -119,6 +119,11 @@ export const users = pgTable(
     name: text("name").notNull(),
     emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
     isPlatformAdmin: boolean("is_platform_admin").notNull().default(false),
+    mfaEnabled: boolean("mfa_enabled").notNull().default(false),
+    mfaSecretEncrypted: text("mfa_secret_encrypted"),
+    mfaEnrolledAt: timestamp("mfa_enrolled_at", { withTimezone: true }),
+    mfaLastStep: integer("mfa_last_step").notNull().default(0),
+    mfaRecoveryUsedAt: timestamp("mfa_recovery_used_at", { withTimezone: true }),
     disabledAt: timestamp("disabled_at", { withTimezone: true }),
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
     createdAt: createdAt(),
@@ -783,6 +788,50 @@ export const subscriptionEntitlements = pgTable(
     updatedAt: updatedAt(),
   },
   (t) => [uniqueIndex("subscription_entitlements_org_feature_uq").on(t.orgId, t.feature)],
+);
+
+/* ------------------------------------------------------------------ *
+ * Multi-factor authentication
+ * ------------------------------------------------------------------ */
+
+export const mfaRecoveryCodes = pgTable(
+  "mfa_recovery_codes",
+  {
+    id: id(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    codeHash: text("code_hash").notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("mfa_recovery_user_code_uq").on(t.userId, t.codeHash),
+    index("mfa_recovery_user_idx").on(t.userId, t.usedAt),
+  ],
+);
+
+export const mfaChallenges = pgTable(
+  "mfa_challenges",
+  {
+    id: id(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    purpose: text("purpose").notNull(), // login | enroll
+    tokenHash: text("token_hash").notNull(),
+    nextPath: text("next_path").notNull().default("/app/dashboard"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    ipAddress: text("ip_address"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("mfa_challenges_token_uq").on(t.tokenHash),
+    index("mfa_challenges_user_idx").on(t.userId, t.expiresAt),
+    check("mfa_challenges_purpose_ck", sql`${t.purpose} in ('login','enroll')`),
+  ],
 );
 
 /* ------------------------------------------------------------------ *

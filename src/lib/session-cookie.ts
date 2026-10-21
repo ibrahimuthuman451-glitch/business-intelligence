@@ -33,3 +33,56 @@ export async function setActiveOrgCookie(orgId: string): Promise<void> {
 export async function readActiveOrgCookie(): Promise<string | undefined> {
   return (await cookies()).get(ACTIVE_ORG_COOKIE)?.value;
 }
+
+export const MFA_COOKIE = "bi_mfa";
+export const MFA_ENROLL_COOKIE = "bi_mfa_enroll";
+
+export function secureCookies(): boolean {
+  return process.env.NODE_ENV === "production";
+}
+
+async function setShortLivedCookie(name: string, token: string, expiresAt: Date): Promise<void> {
+  (await cookies()).set(name, token, {
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+    secure: secureCookies(),
+    expires: expiresAt,
+  });
+}
+
+export async function setMfaChallengeCookie(token: string, expiresAt: Date): Promise<void> {
+  await setShortLivedCookie(MFA_COOKIE, token, expiresAt);
+}
+
+export async function readMfaChallengeCookie(): Promise<string | undefined> {
+  return (await cookies()).get(MFA_COOKIE)?.value;
+}
+
+export async function clearMfaChallengeCookie(): Promise<void> {
+  (await cookies()).set(MFA_COOKIE, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+    secure: secureCookies(),
+    expires: new Date(0),
+  });
+}
+
+export async function setMfaEnrollCookie(token: string, expiresAt: Date): Promise<void> {
+  await setShortLivedCookie(MFA_ENROLL_COOKIE, token, expiresAt);
+}
+
+export async function readMfaEnrollCookie(): Promise<string | undefined> {
+  return (await cookies()).get(MFA_ENROLL_COOKIE)?.value;
+}
+
+export async function clearMfaEnrollCookie(): Promise<void> {
+  (await cookies()).set(MFA_ENROLL_COOKIE, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+    secure: secureCookies(),
+    expires: new Date(0),
+  });
+}

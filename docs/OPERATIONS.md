@@ -10,6 +10,8 @@ APP_URL=https://staging.example.com
 DATABASE_URL=postgres://app:...@db:5432/business_intelligence?sslmode=require
 SESSION_TTL_DAYS=30
 AUTH_DEV_EXPOSE_TOKENS=false
+MFA_ENCRYPTION_KEY=<32-byte base64 or 64-hex>
+MFA_REQUIRED_FOR=platform_admin   # add owner,firm_admin for the pilot
 EMAIL_TRANSPORT=smtp
 SMTP_URL=smtps://...
 EMAIL_FROM="Ledgerline <no-reply@staging.example.com>"
@@ -158,3 +160,5 @@ Never use `git reset --hard`, force-push, or drop the database as a rollback sho
 - [ ] Platform admin created via SQL and audit event recorded.
 - [ ] Demo account isolated (`plan=demo`) or removed before real customer onboarding.
 - [ ] Error logs checked for redaction.
+
+See `docs/STAGING_VALIDATION.md` for the checks actually run against PostgreSQL, SMTP, S3-compatible storage and a real ClamAV daemon.

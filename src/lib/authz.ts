@@ -3,6 +3,7 @@ import type { AppDb } from "@/db/client";
 import { advisorAccess, memberships, organizations, users } from "@/db/schema";
 import type { AuthenticatedUser } from "./auth";
 import { ForbiddenError, UnauthorizedError } from "./errors";
+import { mfaRequiredForActor } from "./mfa/policy";
 
 export const PERMISSIONS = [
   "org:read",
@@ -77,6 +78,7 @@ export function can(role: string, permission: Permission): boolean {
 
 export type Actor = {
   user: AuthenticatedUser;
+  mfaRequired: boolean;
   memberships: {
     orgId: string;
     role: string;
@@ -105,6 +107,7 @@ export async function loadActor(db: AppDb, userId: string): Promise<Actor | null
       name: users.name,
       emailVerifiedAt: users.emailVerifiedAt,
       isPlatformAdmin: users.isPlatformAdmin,
+      mfaEnabled: users.mfaEnabled,
     })
     .from(users)
     .where(eq(users.id, userId))
@@ -124,7 +127,14 @@ export async function loadActor(db: AppDb, userId: string): Promise<Actor | null
     .innerJoin(organizations, eq(organizations.id, memberships.orgId))
     .where(and(eq(memberships.userId, userId), eq(memberships.status, "active")));
 
-  return { user, memberships: rows };
+  return {
+    user,
+    memberships: rows,
+    mfaRequired: mfaRequiredForActor({
+      isPlatformAdmin: user.isPlatformAdmin,
+      roles: rows.map((row) => row.role),
+    }),
+  };
 }
 
 export async function authorizeOrg(
@@ -133,6 +143,9 @@ export async function authorizeOrg(
   orgId: string,
   permission: Permission,
 ): Promise<OrgContext> {
+  if (actor.mfaRequired && !actor.user.mfaEnabled) {
+    throw new ForbiddenError("Multi-factor authentication setup is required before accessing organization data");
+  }
   const membership = actor.memberships.find((m) => m.orgId === orgId);
   if (membership && can(membership.role, permission)) {
     return {

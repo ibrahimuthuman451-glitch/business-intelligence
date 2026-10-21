@@ -202,6 +202,7 @@ export type AuthenticatedUser = {
   name: string;
   emailVerifiedAt: Date | null;
   isPlatformAdmin: boolean;
+  mfaEnabled: boolean;
 };
 
 export async function authenticate(
@@ -269,6 +270,7 @@ export async function authenticate(
     name: user.name,
     emailVerifiedAt: user.emailVerifiedAt,
     isPlatformAdmin: user.isPlatformAdmin,
+    mfaEnabled: user.mfaEnabled,
   };
 }
 
@@ -281,6 +283,7 @@ export async function resolveSession(db: AppDb, token: string): Promise<Authenti
         name: users.name,
         emailVerifiedAt: users.emailVerifiedAt,
         isPlatformAdmin: users.isPlatformAdmin,
+        mfaEnabled: users.mfaEnabled,
         disabledAt: users.disabledAt,
       },
       expiresAt: sessions.expiresAt,
@@ -300,6 +303,7 @@ export async function resolveSession(db: AppDb, token: string): Promise<Authenti
     name: row.user.name,
     emailVerifiedAt: row.user.emailVerifiedAt,
     isPlatformAdmin: row.user.isPlatformAdmin,
+    mfaEnabled: row.user.mfaEnabled,
   };
 }
 
@@ -312,6 +316,24 @@ export async function revokeAllSessions(db: AppDb, userId: string): Promise<void
     .update(sessions)
     .set({ revokedAt: new Date() })
     .where(and(eq(sessions.userId, userId), sql`${sessions.revokedAt} is null`));
+}
+
+/** Revokes every session for the user except the current token. */
+export async function revokeOtherSessions(
+  db: AppDb,
+  userId: string,
+  currentToken: string,
+): Promise<void> {
+  await db
+    .update(sessions)
+    .set({ revokedAt: new Date() })
+    .where(
+      and(
+        eq(sessions.userId, userId),
+        sql`${sessions.revokedAt} is null`,
+        sql`${sessions.tokenHash} <> ${hashToken(currentToken)}`,
+      ),
+    );
 }
 
 

@@ -79,6 +79,7 @@ export type PageContext = { actor: Actor; org: OrgContext; orgs: AccessibleOrg[]
 
 export async function requirePageContext(permission: Permission = "org:read"): Promise<PageContext> {
   const actor = await requirePageActor();
+  if (actor.mfaRequired && !actor.user.mfaEnabled) redirect("/mfa/setup");
   const db = getDb();
   const orgs = await listAccessibleOrgs(actor);
   const base = await resolveActiveOrg(actor);

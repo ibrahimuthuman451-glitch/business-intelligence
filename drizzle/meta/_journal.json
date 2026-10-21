@@ -15,6 +15,13 @@
       "when": 1792574039403,
       "tag": "0001_phase2_email_tasks_storage",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792580617206,
+      "tag": "0002_mfa",
+      "breakpoints": true
     }
   ]
 }

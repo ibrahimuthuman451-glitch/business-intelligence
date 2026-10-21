@@ -13,7 +13,7 @@ Stack: **Next.js 16 (App Router) · React 19 · TypeScript · Drizzle ORM · Pos
 
 | Area | State |
 | --- | --- |
-| Database | 32 tables, constraints/indexes/FKs, migrations `0000` + `0001` |
+| Database | 34 tables, constraints/indexes/FKs, migrations `0000`–`0002` |
 | Authentication | Registration, login/logout, verification, reset, session revocation, login throttling |
 | Tenancy | Server-side authorization on every service and file download; cross-tenant tests |
 | Advisor access | Client grant → invite acceptance → revocation; audited and tested |
@@ -28,7 +28,7 @@ Stack: **Next.js 16 (App Router) · React 19 · TypeScript · Drizzle ORM · Pos
 | Background jobs | Persisted runner via CLI and guarded endpoint; no in-memory timers |
 | Live EBM/RRA | **Not implemented or claimed**; file import only, no government credentials |
 | Live tender feed | **Not implemented or claimed**; verified manual import only |
-| MFA | Not implemented — documented pilot risk |
+| MFA | TOTP implemented: encrypted secrets, hashed one-time recovery codes, replay protection, policy enforcement, audited |
 | Payment gateway | Not implemented; no provider terms/fees verified |
 
 ---
@@ -166,6 +166,9 @@ Known risks and pilot blockers are documented in `docs/SECURITY.md`.
 - `docs/STORAGE.md` — S3/local, ClamAV, retention, backups
 - `docs/PLANS.md` — plan limits and overrides
 - `docs/OPERATIONS.md` — staging deploy, jobs, health, backup/restore, rollback, admin bootstrap
+- `docs/MFA.md` — enrollment, recovery, policy and key management
+- `docs/STAGING_VALIDATION.md` — actual staging/SMTP/S3/ClamAV/backup results
+- `docs/CI.md` — enabling the CI workflow (permission steps)
 - `docs/DEMO.md` — 16-step customer demonstration and safe reset
 - `docs/INTEGRATIONS.md` — tender/EBM scope and synthetic fixture formats
 - `docs/SECURITY.md` — threat model and remaining risks

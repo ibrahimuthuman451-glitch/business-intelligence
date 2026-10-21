@@ -18,6 +18,9 @@
     "demo:reset": "tsx scripts/reset-demo.ts",
     "jobs:run": "tsx scripts/run-jobs.ts",
     "storage:audit": "tsx scripts/storage-audit.ts",
+    "verify:smtp": "tsx scripts/verify-smtp.ts",
+    "verify:s3": "tsx scripts/verify-s3.ts",
+    "verify:clamav": "tsx scripts/verify-clamav.ts",
     "setup": "npm run db:migrate && npm run db:seed"
   },
   "repository": {
@@ -54,6 +57,7 @@
     "drizzle-kit": "^0.31.11",
     "eslint": "^9.39.5",
     "jszip": "^3.10.2",
+    "smtp-server": "^3.20.2",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.71.2",
     "vitest": "^5.0.5"

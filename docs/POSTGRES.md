@@ -3,9 +3,9 @@
 ## Verified environment
 
 - PostgreSQL **16.4** (x86_64 Linux), run in userspace for this verification.
-- Migrations `0000_init.sql` and `0001_phase2_email_tasks_storage.sql` applied from an **empty database**.
-- Full application suite executed against PostgreSQL 16.4: **118/118 tests passed** (16 files).
-- PGlite run: **112 passed, 6 PostgreSQL-only tests skipped**.
+- Migrations `0000_init.sql`, `0001_phase2_email_tasks_storage.sql` and `0002_mfa.sql` applied from an **empty database**.
+- Full application suite executed against PostgreSQL 16.4: **132/132 tests passed** (18 files).
+- PGlite run: **126 passed, 6 PostgreSQL-only tests skipped**.
 - Dedicated PostgreSQL suite (`tests/postgres.integration.test.ts`): **6/6 passed**, covering:
   - server version assertion,
   - idempotent re-application of migrations,
@@ -71,3 +71,5 @@ file creates and drops its own throwaway database, so suites never share state.
 
 PGlite is single-writer and embedded. It stays available for fast local development and
 unit tests, but staging and production must set `DATABASE_URL`.
+
+See `docs/CI.md` for enabling the workflow (the workflow file requires GitHub `workflows` permission).
