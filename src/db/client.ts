@@ -3,6 +3,7 @@ import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { drizzle } from "drizzle-orm/pglite";
 import { drizzle as drizzlePostgres } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
+import { mkdirSync } from "node:fs";
 import * as schema from "./schema";
 
 export type AppDb = PgDatabase<PgQueryResultHKT, typeof schema>;
@@ -38,6 +39,7 @@ export function getDb(): AppDb {
   }
 
   const dir = process.env.PGLITE_DIR ?? ".data/pglite";
+  mkdirSync(dir, { recursive: true });
   const client = new PGlite(dir);
   const db = drizzle(client, { schema }) as unknown as AppDb;
   globalForDb.__biDb = { db, client };

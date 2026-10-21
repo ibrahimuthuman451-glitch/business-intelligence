@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ["@electric-sql/pglite", "argon2", "postgres"],
+  serverExternalPackages: ["@electric-sql/pglite", "argon2", "postgres", "unzipper", "read-excel-file"],
   experimental: {
     serverActions: { bodySizeLimit: "12mb" },
   },

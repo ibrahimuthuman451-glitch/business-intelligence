@@ -633,3 +633,32 @@ export async function listContacts(db: AppDb, ctx: OrgContext) {
   return { customers: customerRows, suppliers: supplierRows };
 }
 
+
+export async function setInvoiceStatus(
+  db: AppDb,
+  ctx: OrgContext,
+  invoiceId: string,
+  status: "draft" | "sent" | "void",
+): Promise<void> {
+  requireFinance(ctx, true);
+  const [invoice] = await db
+    .select()
+    .from(invoices)
+    .where(and(eq(invoices.id, invoiceId), eq(invoices.orgId, ctx.orgId)))
+    .limit(1);
+  if (!invoice) throw new NotFoundError("Invoice not found");
+  if (["paid", "partially_paid"].includes(invoice.status) && status !== "void") {
+    throw new ValidationError("Invoices with payments cannot be reopened");
+  }
+  await db
+    .update(invoices)
+    .set({ status, updatedAt: new Date() })
+    .where(and(eq(invoices.id, invoiceId), eq(invoices.orgId, ctx.orgId)));
+  await recordAuditSafe(db, {
+    orgId: ctx.orgId,
+    actorUserId: ctx.actor.user.id,
+    action: `invoice.${status}`,
+    entityType: "invoice",
+    entityId: invoiceId,
+  });
+}

@@ -10,6 +10,7 @@ import { migrate as migratePostgres } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
 import * as schema from "../src/db/schema";
 import path from "node:path";
+import { mkdirSync } from "node:fs";
 
 const folder = path.resolve(process.cwd(), "drizzle");
 const url = process.env.DATABASE_URL?.trim();
@@ -24,7 +25,8 @@ async function main() {
     return;
   }
 
-  const dir = process.env.PGLITE_DIR ?? ".data/pglite";
+  const dir = path.resolve(process.cwd(), process.env.PGLITE_DIR ?? ".data/pglite");
+  mkdirSync(dir, { recursive: true });
   const client = new PGlite(dir);
   const db = drizzlePglite(client, { schema });
   await migratePglite(db, { migrationsFolder: folder });
