@@ -59,13 +59,14 @@ export default async function DocumentsPage({ searchParams }: { searchParams: Pr
             <EmptyState title="No documents yet">Upload bank statements, receipts or tax filings to build the reporting file.</EmptyState>
           ) : (
             <div className="table-wrap"><table className="data">
-              <thead><tr><th>File</th><th>Category</th><th>Period</th><th>Review</th><th>Uploaded</th><th></th></tr></thead>
+              <thead><tr><th>File</th><th>Category</th><th>Period</th><th>Review</th><th>Scan</th><th>Uploaded</th><th></th></tr></thead>
               <tbody>{documents.map((document) => (
                 <tr key={document.id}>
                   <td><a href={`/api/documents/${document.id}/download`} className="strong">{document.originalFilename}</a><div className="tiny muted">{bytes(document.sizeBytes)} · {document.mimeType}</div></td>
                   <td><span className="badge gray">{document.category}</span></td>
                   <td className="small nowrap">{document.periodStart ? `${formatDate(document.periodStart)} – ${formatDate(document.periodEnd)}` : "-"}</td>
                   <td><Badge value={document.status} />{document.reviewNotes ? <div className="tiny muted">{document.reviewNotes}</div> : null}</td>
+                  <td><Badge value={document.scanStatus === "clean" ? "green" : document.scanStatus === "infected" ? "red" : "gray"} label={document.scanStatus.replace("_", " ")} />{document.scanStatus === "not_scanned" ? <div className="tiny muted">scanner not configured</div> : null}</td>
                   <td className="small nowrap">{formatDateTime(document.createdAt)}</td>
                   <td>
                     <div className="stack-tight">

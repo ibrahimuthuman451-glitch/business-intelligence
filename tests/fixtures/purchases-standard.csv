@@ -1,0 +1,4 @@
+Supplier Ref,Amount,Date,Supplier
+PUR-2001,45000,2026-03-01,Sample Supplier
+PUR-2002,12000,2026-03-02,Other Supplier
+PUR-9999,5000,2026-03-03,Unknown Supplier

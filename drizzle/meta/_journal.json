@@ -8,6 +8,13 @@
       "when": 1792570651571,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792574039403,
+      "tag": "0001_phase2_email_tasks_storage",
+      "breakpoints": true
     }
   ]
 }

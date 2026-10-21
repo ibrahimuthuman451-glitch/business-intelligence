@@ -12,6 +12,7 @@ type Props = {
   orgs: Org[];
   permissions: string[];
   isPlatformAdmin: boolean;
+  unreadCount: number;
 };
 
 const SECTIONS: { label: string; items: { href: string; label: string; permission: string }[] }[] = [
@@ -23,6 +24,7 @@ const SECTIONS: { label: string; items: { href: string; label: string; permissio
       { href: "/app/expenses", label: "Expenses", permission: "finance:read" },
       { href: "/app/invoices", label: "Invoices", permission: "finance:read" },
       { href: "/app/contacts", label: "Customers & suppliers", permission: "finance:read" },
+      { href: "/app/reports", label: "Reports & exports", permission: "finance:read" },
     ],
   },
   {
@@ -43,7 +45,7 @@ const SECTIONS: { label: string; items: { href: string; label: string; permissio
   },
 ];
 
-export function Sidebar({ user, org, orgs, permissions, isPlatformAdmin }: Props) {
+export function Sidebar({ user, org, orgs, permissions, isPlatformAdmin, unreadCount }: Props) {
   const pathname = usePathname();
 
   return (
@@ -92,6 +94,15 @@ export function Sidebar({ user, org, orgs, permissions, isPlatformAdmin }: Props
             </div>
           );
         })}
+        <div>
+          <div className="nav-group">Inbox</div>
+          <Link href="/app/notifications" className={pathname.startsWith("/app/notifications") ? "active" : undefined}>
+            Notifications{unreadCount > 0 ? ` (${unreadCount})` : ""}
+          </Link>
+          <Link href="/app/tasks" className={pathname.startsWith("/app/tasks") ? "active" : undefined}>
+            Tasks
+          </Link>
+        </div>
         {isPlatformAdmin ? (
           <div>
             <div className="nav-group">Platform</div>

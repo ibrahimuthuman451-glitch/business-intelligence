@@ -42,6 +42,10 @@ const REQUIRED_TABLES = [
   "subscription_entitlements",
   "sessions",
   "verification_tokens",
+  "email_outbox",
+  "rate_limits",
+  "notification_preferences",
+  "job_runs",
 ];
 
 describe("migrations", () => {

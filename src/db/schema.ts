@@ -10,6 +10,7 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -97,6 +98,13 @@ export const reconFindingStatusEnum = pgEnum("recon_finding_status", [
   "dismissed",
 ]);
 export const reconSeverityEnum = pgEnum("recon_severity", ["info", "warning", "error"]);
+export const emailStatusEnum = pgEnum("email_status", ["queued", "sending", "sent", "failed"]);
+export const scanStatusEnum = pgEnum("scan_status", [
+  "not_scanned",
+  "clean",
+  "infected",
+  "error",
+]);
 
 /* ------------------------------------------------------------------ *
  * Identity & organizations
@@ -480,6 +488,9 @@ export const documents = pgTable(
     reviewerId: text("reviewer_id").references(() => users.id, { onDelete: "set null" }),
     reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
     reviewNotes: text("review_notes"),
+    scanStatus: scanStatusEnum("scan_status").notNull().default("not_scanned"),
+    scanDetails: text("scan_details"),
+    quarantinedAt: timestamp("quarantined_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
@@ -529,12 +540,21 @@ export const tasks = pgTable(
     dueDate: date("due_date"),
     status: taskStatusEnum("status").notNull().default("open"),
     priority: text("priority").notNull().default("normal"),
+    customerId: text("customer_id").references(() => customers.id, { onDelete: "set null" }),
+    periodStart: date("period_start"),
+    periodEnd: date("period_end"),
+    source: text("source").notNull().default("manual"),
     assigneeUserId: text("assignee_user_id").references(() => users.id, { onDelete: "set null" }),
     createdBy: text("created_by").references(() => users.id, { onDelete: "set null" }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [index("tasks_org_status_idx").on(t.orgId, t.status)],
+  (t) => [
+    index("tasks_org_status_idx").on(t.orgId, t.status),
+    index("tasks_org_due_idx").on(t.orgId, t.dueDate),
+    index("tasks_assignee_idx").on(t.assigneeUserId, t.status),
+  ],
 );
 
 export const notifications = pgTable(
@@ -548,10 +568,16 @@ export const notifications = pgTable(
     title: text("title").notNull(),
     body: text("body"),
     href: text("href"),
+    type: text("type").notNull().default("general"),
+    dedupeKey: text("dedupe_key"),
     readAt: timestamp("read_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
-  (t) => [index("notifications_user_idx").on(t.userId, t.readAt)],
+  (t) => [
+    index("notifications_user_idx").on(t.userId, t.readAt),
+    index("notifications_org_idx").on(t.orgId, t.createdAt),
+    uniqueIndex("notifications_user_dedupe_uq").on(t.userId, t.dedupeKey),
+  ],
 );
 
 
@@ -618,12 +644,14 @@ export const tenderMatches = pgTable(
     relevanceScore: integer("relevance_score").notNull().default(0),
     eligibility: eligibilityEnum("eligibility").notNull().default("unknown"),
     reasons: jsonb("reasons").$type<string[]>().notNull().default([]),
+    saved: boolean("saved").notNull().default(false),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [
     uniqueIndex("tender_matches_uq").on(t.tenderId, t.orgId),
     index("tender_matches_org_idx").on(t.orgId, t.relevanceScore),
+    index("tender_matches_saved_idx").on(t.orgId, t.saved),
   ],
 );
 
@@ -751,10 +779,84 @@ export const subscriptionEntitlements = pgTable(
       .references(() => organizations.id, { onDelete: "cascade" }),
     feature: text("feature").notNull(),
     enabled: boolean("enabled").notNull().default(true),
-    limitValue: integer("limit_value"),
+    limitValue: bigint("limit_value", { mode: "number" }),
     updatedAt: updatedAt(),
   },
   (t) => [uniqueIndex("subscription_entitlements_org_feature_uq").on(t.orgId, t.feature)],
+);
+
+/* ------------------------------------------------------------------ *
+ * Email outbox, rate limiting, notification preferences, job runs
+ * ------------------------------------------------------------------ */
+
+export const emailOutbox = pgTable(
+  "email_outbox",
+  {
+    id: id(),
+    toEmail: text("to_email").notNull(),
+    subject: text("subject").notNull(),
+    bodyText: text("body_text").notNull(),
+    bodyHtml: text("body_html"),
+    kind: text("kind").notNull(),
+    dedupeKey: text("dedupe_key"),
+    status: emailStatusEnum("status").notNull().default("queued"),
+    attempts: integer("attempts").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
+    lastError: text("last_error"),
+    providerMessageId: text("provider_message_id"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("email_outbox_dedupe_uq").on(t.dedupeKey),
+    index("email_outbox_status_idx").on(t.status, t.nextAttemptAt),
+    index("email_outbox_created_idx").on(t.createdAt),
+  ],
+);
+
+/** Fixed-window counters; updated atomically with INSERT ... ON CONFLICT. */
+export const rateLimits = pgTable(
+  "rate_limits",
+  {
+    bucket: text("bucket").notNull(),
+    key: text("key").notNull(),
+    windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
+    count: integer("count").notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.bucket, t.key, t.windowStart] })],
+);
+
+export const notificationPreferences = pgTable(
+  "notification_preferences",
+  {
+    id: id(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    orgId: text("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    category: text("category").notNull(),
+    inAppEnabled: boolean("in_app_enabled").notNull().default(true),
+    emailEnabled: boolean("email_enabled").notNull().default(true),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("notification_preferences_uq").on(t.userId, t.orgId, t.category)],
+);
+
+export const jobRuns = pgTable(
+  "job_runs",
+  {
+    id: id(),
+    name: text("name").notNull(),
+    status: text("status").notNull(), // running | completed | failed
+    summary: jsonb("summary").$type<Record<string, unknown>>(),
+    error: text("error"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (t) => [index("job_runs_name_idx").on(t.name, t.startedAt)],
 );
 
 export type User = typeof users.$inferSelect;

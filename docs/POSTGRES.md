@@ -3,8 +3,9 @@
 ## Verified environment
 
 - PostgreSQL **16.4** (x86_64 Linux), run in userspace for this verification.
-- Migrations applied from an **empty database** with `drizzle/0000_init.sql`.
-- Full application suite executed against PostgreSQL 16.4: **52/52 tests passed**.
+- Migrations `0000_init.sql` and `0001_phase2_email_tasks_storage.sql` applied from an **empty database**.
+- Full application suite executed against PostgreSQL 16.4: **118/118 tests passed** (16 files).
+- PGlite run: **112 passed, 6 PostgreSQL-only tests skipped**.
 - Dedicated PostgreSQL suite (`tests/postgres.integration.test.ts`): **6/6 passed**, covering:
   - server version assertion,
   - idempotent re-application of migrations,

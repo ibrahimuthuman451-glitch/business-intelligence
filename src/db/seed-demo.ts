@@ -52,12 +52,10 @@ export async function removeDemoWorkspace(db: AppDb): Promise<void> {
   const memberOrgs = await db
     .select({ orgId: memberships.orgId })
     .from(memberships)
-    .where(inArray(memberships.userId, userIds));
-  const slugOrgs = await db
-    .select({ orgId: organizations.id })
-    .from(organizations)
-    .where(like(organizations.slug, "sample-%"));
-  const orgIds = [...new Set([...memberOrgs, ...slugOrgs].map((row) => row.orgId))];
+    .where(and(inArray(memberships.userId, userIds), eq(memberships.role, "owner")));
+  // Only organizations owned by demo users are removed. If a demo user was
+  // invited into a real customer organization, that organization is preserved.
+  const orgIds = [...new Set(memberOrgs.map((row) => row.orgId))];
   if (orgIds.length > 0) {
     await db.delete(organizations).where(inArray(organizations.id, orgIds));
   }
@@ -172,7 +170,7 @@ export async function seedDemoWorkspace(
     reference: "SAMPLE-PAYMENT-1",
   });
 
-  const bankStatement = await createDocument(db, ctx, {
+  await createDocument(db, ctx, {
     filename: "SAMPLE-bank-statement.pdf",
     declaredMimeType: "application/pdf",
     bytes: PDF,

@@ -5,6 +5,9 @@ import { revalidatePath } from "next/cache";
 import { getDb } from "@/db/client";
 import { requirePageContext } from "@/lib/current-user";
 import { describeError } from "@/lib/request";
+import { linksVisibleInUi } from "@/lib/email";
+import { sendEmail } from "@/lib/email/outbox";
+import { invitationEmailWithToken } from "@/lib/email/templates";
 import {
   createCustomer,
   createExpense,
@@ -26,6 +29,7 @@ import {
   assessTenderFit,
   ensureChecklist,
   importTender,
+  setTenderSaved,
   toggleChecklistItem,
 } from "@/lib/tenders";
 import { runReconciliation } from "@/lib/reconciliation";
@@ -36,6 +40,15 @@ import {
   type InvitableRole,
 } from "@/lib/team";
 import { changePassword } from "@/lib/auth";
+import { completeTask, createTask, updateTask } from "@/lib/tasks";
+import { createOrganizationForUser } from "@/lib/organizations";
+import { setActiveOrgCookie } from "@/lib/session-cookie";
+import {
+  markAllNotificationsRead,
+  markNotificationRead,
+  NOTIFICATION_CATEGORIES,
+  setNotificationPreference,
+} from "@/lib/notifications";
 import { businessProfiles, organizations } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { recordAuditSafe } from "@/lib/audit";
@@ -54,6 +67,12 @@ function optional(form: FormData, key: string): string | null {
 function backPath(form: FormData, fallback: string): string {
   const value = field(form, "returnTo");
   return value.startsWith("/app") ? value : fallback;
+}
+
+function emailNotice(status: string, subject: string): string {
+  if (status === "sent" || status === "duplicate") return `${subject} sent.`;
+  if (status === "queued") return `${subject} queued; delivery will be retried.`;
+  return `${subject} could not be delivered.`;
 }
 
 async function finish(path: string, work: () => Promise<string>): Promise<void> {
@@ -378,8 +397,21 @@ export async function inviteMemberAction(formData: FormData): Promise<void> {
       email: field(formData, "email"),
       role,
     });
-    console.info(`[invitation] ${field(formData, "email")} -> /invite/${result.token}`);
-    return `Invitation created. Share this single-use link: ${process.env.APP_URL ?? "http://localhost:3000"}/invite/${result.token}`;
+    const rendered = invitationEmailWithToken({
+      organizationName: org.orgName,
+      role,
+      kind: "member",
+      token: result.token,
+    });
+    const delivery = await sendEmail(getDb(), {
+      to: field(formData, "email"),
+      subject: rendered.subject,
+      text: rendered.text,
+      html: rendered.html,
+      kind: "team.invitation",
+    });
+    const link = linksVisibleInUi() ? ` Invite link (development): ${rendered.link}` : "";
+    return `Invitation created. ${emailNotice(delivery.status, "Invitation email")}${link}`;
   });
 }
 
@@ -391,8 +423,21 @@ export async function grantAdvisorAction(formData: FormData): Promise<void> {
       advisorEmail: field(formData, "advisorEmail"),
       firmOrgId: optional(formData, "firmOrgId"),
     });
-    console.info(`[advisor-invitation] ${field(formData, "advisorEmail")} -> /invite/${result.token}`);
-    return `Advisor authorization created (pending acceptance). Invite link: ${process.env.APP_URL ?? "http://localhost:3000"}/invite/${result.token}`;
+    const rendered = invitationEmailWithToken({
+      organizationName: org.orgName,
+      role: "advisor",
+      kind: "advisor",
+      token: result.token,
+    });
+    const delivery = await sendEmail(getDb(), {
+      to: field(formData, "advisorEmail"),
+      subject: rendered.subject,
+      text: rendered.text,
+      html: rendered.html,
+      kind: "advisor.invitation",
+    });
+    const link = linksVisibleInUi() ? ` Invite link (development): ${rendered.link}` : "";
+    return `Advisor authorization created (pending acceptance). ${emailNotice(delivery.status, "Advisor invitation email")}${link}`;
   });
 }
 
@@ -461,5 +506,120 @@ export async function changePasswordAction(formData: FormData): Promise<void> {
       field(formData, "newPassword"),
     );
     return "Password changed. Other sessions were signed out.";
+  });
+}
+
+export async function createTaskAction(formData: FormData): Promise<void> {
+  const path = backPath(formData, "/app/tasks");
+  await finish(path, async () => {
+    const { org } = await requirePageContext("finance:write");
+    await createTask(getDb(), org, {
+      title: field(formData, "title"),
+      description: optional(formData, "description"),
+      dueDate: optional(formData, "dueDate"),
+      priority: field(formData, "priority") || "normal",
+      assigneeUserId: optional(formData, "assigneeUserId"),
+      customerId: optional(formData, "customerId"),
+      periodStart: optional(formData, "periodStart"),
+      periodEnd: optional(formData, "periodEnd"),
+    });
+    return "Task created.";
+  });
+}
+
+export async function updateTaskAction(formData: FormData): Promise<void> {
+  const taskId = field(formData, "taskId");
+  const path = backPath(formData, "/app/tasks");
+  await finish(path, async () => {
+    const { org } = await requirePageContext("finance:write");
+    const status = field(formData, "status");
+    if (!["open", "in_progress", "done", "cancelled"].includes(status)) {
+      throw new ValidationError("Invalid task status");
+    }
+    await updateTask(getDb(), org, taskId, {
+      title: field(formData, "title"),
+      description: optional(formData, "description"),
+      dueDate: optional(formData, "dueDate"),
+      priority: field(formData, "priority"),
+      assigneeUserId: optional(formData, "assigneeUserId"),
+      customerId: optional(formData, "customerId"),
+      periodStart: optional(formData, "periodStart"),
+      periodEnd: optional(formData, "periodEnd"),
+      status: status as "open" | "in_progress" | "done" | "cancelled",
+    });
+    return "Task updated.";
+  });
+}
+
+export async function completeTaskAction(formData: FormData): Promise<void> {
+  const path = backPath(formData, "/app/tasks");
+  await finish(path, async () => {
+    const { org } = await requirePageContext("finance:write");
+    await completeTask(getDb(), org, field(formData, "taskId"));
+    return "Task completed.";
+  });
+}
+
+export async function markNotificationReadAction(formData: FormData): Promise<void> {
+  const path = backPath(formData, "/app/notifications");
+  await finish(path, async () => {
+    const { actor } = await requirePageContext("org:read");
+    await markNotificationRead(getDb(), actor.user.id, field(formData, "notificationId"));
+    return "Notification marked as read.";
+  });
+}
+
+export async function markAllNotificationsReadAction(formData: FormData): Promise<void> {
+  const path = backPath(formData, "/app/notifications");
+  await finish(path, async () => {
+    const { actor, org } = await requirePageContext("org:read");
+    await markAllNotificationsRead(getDb(), actor.user.id, org.orgId);
+    return "All notifications marked as read.";
+  });
+}
+
+export async function updateNotificationPreferencesAction(formData: FormData): Promise<void> {
+  const path = backPath(formData, "/app/notifications");
+  await finish(path, async () => {
+    const { actor, org } = await requirePageContext("org:read");
+    for (const category of NOTIFICATION_CATEGORIES) {
+      await setNotificationPreference(getDb(), {
+        userId: actor.user.id,
+        orgId: org.orgId,
+        category,
+        inAppEnabled: formData.get(`in_app_${category}`) === "on",
+        emailEnabled: formData.get(`email_${category}`) === "on",
+      });
+    }
+    return "Notification preferences saved.";
+  });
+}
+
+export async function createOrganizationAction(formData: FormData): Promise<void> {
+  const path = "/app/settings";
+  await finish(path, async () => {
+    const { actor } = await requirePageContext("org:read");
+    if (!actor.user.emailVerifiedAt) {
+      throw new ValidationError("Verify your email address before creating another organization");
+    }
+    const kind = field(formData, "kind") === "accounting_firm" ? "accounting_firm" : "business";
+    const created = await createOrganizationForUser(getDb(), actor.user.id, {
+      name: field(formData, "name"),
+      kind,
+      currency: field(formData, "currency") || "RWF",
+    });
+    await setActiveOrgCookie(created.orgId);
+    revalidatePath("/app", "layout");
+    return "Organization created and selected.";
+  });
+}
+
+export async function saveTenderAction(formData: FormData): Promise<void> {
+  const path = backPath(formData, "/app/tenders");
+  await finish(path, async () => {
+    const { org } = await requirePageContext("tenders:write");
+    const saved = field(formData, "saved") === "true";
+    await setTenderSaved(getDb(), org, field(formData, "tenderId"), saved);
+    return saved ? "Opportunity saved." : "Opportunity removed from saved list.";
   });
 }

@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import { Sidebar } from "@/components/sidebar";
+import Link from "next/link";
 import { requirePageContext } from "@/lib/current-user";
+import { getDb } from "@/db/client";
+import { unreadNotificationCount } from "@/lib/notifications";
 import { Alert } from "@/components/ui";
 
 export const metadata: Metadata = { title: "Workspace" };
@@ -8,6 +11,7 @@ export const metadata: Metadata = { title: "Workspace" };
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const { actor, org, orgs } = await requirePageContext("org:read");
   const unverified = !actor.user.emailVerifiedAt;
+  const unreadCount = await unreadNotificationCount(getDb(), actor.user.id, org.orgId);
 
   return (
     <div className="shell">
@@ -17,6 +21,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         orgs={orgs}
         permissions={org.permissions}
         isPlatformAdmin={actor.user.isPlatformAdmin}
+        unreadCount={unreadCount}
       />
       <main className="main">
         {org.plan === "demo" ? (
@@ -28,7 +33,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         {unverified ? (
           <Alert tone="warn">
             Your email is not verified yet. Check the verification link sent to{" "}
-            <strong>{actor.user.email}</strong>.
+            <strong>{actor.user.email}</strong>, or open <Link href="/verify-email">resend verification</Link>.
           </Alert>
         ) : null}
         {org.viaAdvisorAccess ? (

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { AppError, ValidationError } from "./errors";
 
@@ -102,14 +102,9 @@ export function validateUpload(input: {
   };
 }
 
-/** Stores bytes under a random, org-scoped key. Never derived from user input. */
-export async function saveUpload(orgId: string, bytes: Buffer, extension: string): Promise<string> {
-  const key = `${orgId}/${randomUUID()}.${extension}`;
-  const target = path.join(uploadRoot(), key);
-  await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
-  await writeFile(target, bytes, { mode: 0o600, flag: "wx" });
-  return key;
-}
+export type { StorageDriver } from "./storage-types";
+import { S3StorageDriver } from "./storage-s3";
+import type { StorageDriver } from "./storage-types";
 
 function resolveKey(storageKey: string): string {
   if (!/^[a-zA-Z0-9-]+\/[a-zA-Z0-9-]+\.[a-z0-9]+$/.test(storageKey)) {
@@ -123,15 +118,114 @@ function resolveKey(storageKey: string): string {
   return target;
 }
 
-export async function readUpload(storageKey: string): Promise<Buffer> {
+/** Local private storage for development and single-node deployments. */
+const localDriver: StorageDriver = {
+  name: "local",
+  async put(key, bytes) {
+    const target = resolveKey(key);
+    await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
+    await writeFile(target, bytes, { mode: 0o600, flag: "wx" });
+  },
+  async get(key) {
+    try {
+      return await readFile(resolveKey(key));
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      throw new AppError("The stored file is unavailable", 404, "document_missing");
+    }
+  },
+  async delete(key) {
+    await rm(resolveKey(key), { force: true });
+  },
+  async list(prefix) {
+    const root = uploadRoot();
+    const results: { key: string; sizeBytes: number }[] = [];
+    async function walk(directory: string, relative: string): Promise<void> {
+      let entries;
+      try {
+        entries = await readdir(directory, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        const nextRelative = relative ? `${relative}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) await walk(path.join(directory, entry.name), nextRelative);
+        else if (nextRelative.startsWith(prefix)) {
+          const stat = await statFile(path.join(directory, entry.name));
+          results.push({ key: nextRelative, sizeBytes: stat });
+        }
+      }
+    }
+    await walk(root, "");
+    return results;
+  },
+};
+
+async function statFile(target: string): Promise<number> {
+  const { stat } = await import("node:fs/promises");
   try {
-    return await readFile(resolveKey(storageKey));
-  } catch (error) {
-    if (error instanceof AppError) throw error;
-    throw new AppError("The stored file is unavailable", 404, "document_missing");
+    return (await stat(target)).size;
+  } catch {
+    return 0;
   }
 }
 
+let override: StorageDriver | null = null;
+
+export function setStorageDriverForTesting(driver: StorageDriver | null): void {
+  override = driver;
+}
+
+export function storageDriverName(): "local" | "s3" {
+  return (process.env.STORAGE_DRIVER ?? "local").toLowerCase() === "s3" ? "s3" : "local";
+}
+
+export function getStorageDriver(): StorageDriver {
+  if (override) return override;
+  if (storageDriverName() === "local") return localDriver;
+  const bucket = process.env.S3_BUCKET?.trim();
+  const region = process.env.S3_REGION?.trim();
+  const accessKeyId = process.env.S3_ACCESS_KEY_ID?.trim();
+  const secretAccessKey = process.env.S3_SECRET_ACCESS_KEY?.trim();
+  if (!bucket || !region || !accessKeyId || !secretAccessKey) {
+    throw new AppError("Object storage is not configured", 500, "storage_not_configured");
+  }
+  return new S3StorageDriver({
+    bucket,
+    region,
+    accessKeyId,
+    secretAccessKey,
+    endpoint: process.env.S3_ENDPOINT?.trim() || undefined,
+    forcePathStyle: (process.env.S3_FORCE_PATH_STYLE ?? "true") !== "false",
+  });
+}
+
+/** Stores bytes under a random, org-scoped key. Never derived from user input. */
+export async function saveUpload(
+  orgId: string,
+  bytes: Buffer,
+  extension: string,
+  contentType?: string,
+): Promise<string> {
+  const key = `${orgId}/${randomUUID()}.${extension}`;
+  const target = resolveKey(key);
+  if (storageDriverName() === "local" && !override) {
+    await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
+  }
+  await getStorageDriver().put(key, bytes, contentType);
+  return key;
+}
+
+export async function readUpload(storageKey: string): Promise<Buffer> {
+  resolveKey(storageKey);
+  return getStorageDriver().get(storageKey);
+}
+
 export async function deleteUpload(storageKey: string): Promise<void> {
-  await rm(resolveKey(storageKey), { force: true });
+  resolveKey(storageKey);
+  await getStorageDriver().delete(storageKey);
+}
+
+export async function listStoredObjects(prefix = ""): Promise<{ key: string; sizeBytes: number }[]> {
+  return getStorageDriver().list ? getStorageDriver().list!(prefix) : [];
 }

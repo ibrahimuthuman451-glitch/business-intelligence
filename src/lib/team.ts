@@ -3,9 +3,11 @@ import type { AppDb } from "@/db/client";
 import { advisorAccess, invitations, memberships, organizations, users } from "@/db/schema";
 import { recordAuditSafe } from "./audit";
 import type { OrgContext } from "./authz";
-import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "./errors";
+import { AppError, ConflictError, ForbiddenError, NotFoundError, ValidationError } from "./errors";
+import { consumeRateLimit } from "./rate-limit";
 import { hashToken, normalizeEmail, randomToken } from "./ids";
 import { hashPassword } from "./password";
+import { assertEntitlement, assertTeamSeat, withOrgQuota } from "./entitlements";
 
 const INVITE_TTL_DAYS = 7;
 export const INVITABLE_ROLES = ["staff", "advisor", "firm_admin"] as const;
@@ -25,6 +27,15 @@ export async function createMemberInvitation(
   if (!ctx.actor.user.emailVerifiedAt) {
     throw new ForbiddenError("Verify your email address before inviting people");
   }
+  const rate = await consumeRateLimit(db, {
+    bucket: "team_invitations",
+    key: ctx.orgId,
+    limit: 30,
+    windowSeconds: 3600,
+  });
+  if (!rate.allowed) {
+    throw new AppError("Too many invitations sent. Try again later.", 429, "rate_limited");
+  }
   if (!INVITABLE_ROLES.includes(input.role)) throw new ValidationError("Invalid role");
   if (!ctx.permissions.includes("billing:manage") && input.role !== "advisor") {
     throw new ForbiddenError("Only an owner can invite staff");
@@ -41,19 +52,23 @@ export async function createMemberInvitation(
   if (existingMember) throw new ConflictError("That person is already a member");
 
   const token = randomToken();
-  const [row] = await db
-    .insert(invitations)
-    .values({
-      orgId: ctx.orgId,
-      email,
-      role: input.role,
-      kind: "member",
-      tokenHash: hashToken(token),
-      invitedBy: ctx.actor.user.id,
-      expiresAt: inviteExpiry(),
-    })
-    .returning({ id: invitations.id });
-  if (!row) throw new Error("Could not create invitation");
+  const row = await withOrgQuota(db, ctx.orgId, async (tx) => {
+    await assertTeamSeat(tx, ctx.orgId, 1);
+    const [inserted] = await tx
+      .insert(invitations)
+      .values({
+        orgId: ctx.orgId,
+        email,
+        role: input.role,
+        kind: "member",
+        tokenHash: hashToken(token),
+        invitedBy: ctx.actor.user.id,
+        expiresAt: inviteExpiry(),
+      })
+      .returning({ id: invitations.id });
+    if (!inserted) throw new Error("Could not create invitation");
+    return inserted;
+  });
 
   await recordAuditSafe(db, {
     orgId: ctx.orgId,
@@ -81,6 +96,15 @@ export async function grantAdvisorAccess(
   if (!ctx.permissions.includes("team:manage")) throw new ForbiddenError();
   if (!ctx.actor.user.emailVerifiedAt) {
     throw new ForbiddenError("Verify your email address before authorizing an advisor");
+  }
+  const rate = await consumeRateLimit(db, {
+    bucket: "advisor_grants",
+    key: ctx.orgId,
+    limit: 30,
+    windowSeconds: 3600,
+  });
+  if (!rate.allowed) {
+    throw new AppError("Too many advisor invitations sent. Try again later.", 429, "rate_limited");
   }
   const advisorEmail = normalizeEmail(input.advisorEmail);
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(advisorEmail)) {
@@ -110,6 +134,15 @@ export async function grantAdvisorAccess(
       .limit(1);
     if (existing && existing.status !== "revoked") {
       throw new ConflictError("This advisor already has access or a pending invitation");
+    }
+
+    if (firmOrgId) {
+      await tx
+        .select({ id: organizations.id })
+        .from(organizations)
+        .where(eq(organizations.id, firmOrgId))
+        .for("update");
+      await assertEntitlement(tx as unknown as AppDb, firmOrgId, "advisor_clients", 1);
     }
 
     const grantValues = {
@@ -212,71 +245,69 @@ export function invitationProblem(invite: InvitationLookup | null): string | nul
 }
 
 async function applyInvitation(
-  db: AppDb,
+  tx: AppDb,
   invite: InvitationLookup,
   userId: string,
 ): Promise<void> {
-  await db.transaction(async (tx) => {
-    // Advisor invitations authorize advisor access only. They must never create
-    // a membership, otherwise revoking the grant would leave access behind.
-    if (invite.kind === "member") {
-      const [membership] = await tx
-        .select({ id: memberships.id })
-        .from(memberships)
-        .where(and(eq(memberships.orgId, invite.orgId), eq(memberships.userId, userId)))
-        .limit(1);
+  // Advisor invitations authorize advisor access only. They must never create
+  // a membership, otherwise revoking the grant would leave access behind.
+  if (invite.kind === "member") {
+    const [membership] = await tx
+      .select({ id: memberships.id })
+      .from(memberships)
+      .where(and(eq(memberships.orgId, invite.orgId), eq(memberships.userId, userId)))
+      .limit(1);
 
-      if (membership) {
-        await tx
-          .update(memberships)
-          .set({
-            role: invite.role as "staff" | "advisor" | "firm_admin",
-            status: "active",
-            updatedAt: new Date(),
-          })
-          .where(eq(memberships.id, membership.id));
-      } else {
-        await tx.insert(memberships).values({
-          orgId: invite.orgId,
-          userId,
+    if (membership) {
+      await tx
+        .update(memberships)
+        .set({
           role: invite.role as "staff" | "advisor" | "firm_admin",
           status: "active",
-        });
-      }
+          updatedAt: new Date(),
+        })
+        .where(eq(memberships.id, membership.id));
+    } else {
+      await tx.insert(memberships).values({
+        orgId: invite.orgId,
+        userId,
+        role: invite.role as "staff" | "advisor" | "firm_admin",
+        status: "active",
+      });
     }
+  }
 
-    if (invite.kind === "advisor") {
-      const [grant] = await tx
-        .select({ id: advisorAccess.id })
-        .from(advisorAccess)
-        .where(
-          and(
-            eq(advisorAccess.clientOrgId, invite.orgId),
-            eq(advisorAccess.advisorEmail, invite.email),
-          ),
-        )
-        .limit(1);
-      if (grant) {
-        await tx
-          .update(advisorAccess)
-          .set({ advisorUserId: userId, status: "active", grantedAt: new Date(), revokedAt: null })
-          .where(eq(advisorAccess.id, grant.id));
-      } else {
-        await tx.insert(advisorAccess).values({
-          clientOrgId: invite.orgId,
-          advisorEmail: invite.email,
-          advisorUserId: userId,
-          status: "active",
-          grantedBy: userId,
-          grantedAt: new Date(),
-        });
-      }
+  if (invite.kind === "advisor") {
+    const [grant] = await tx
+      .select({ id: advisorAccess.id })
+      .from(advisorAccess)
+      .where(
+        and(
+          eq(advisorAccess.clientOrgId, invite.orgId),
+          eq(advisorAccess.advisorEmail, invite.email),
+        ),
+      )
+      .limit(1);
+    if (grant) {
+      await tx
+        .update(advisorAccess)
+        .set({ advisorUserId: userId, status: "active", grantedAt: new Date(), revokedAt: null })
+        .where(eq(advisorAccess.id, grant.id));
+    } else {
+      await tx.insert(advisorAccess).values({
+        clientOrgId: invite.orgId,
+        advisorEmail: invite.email,
+        advisorUserId: userId,
+        status: "active",
+        grantedBy: userId,
+        grantedAt: new Date(),
+      });
     }
+  }
 
-    await tx.update(invitations).set({ acceptedAt: new Date() }).where(eq(invitations.id, invite.id));
-  });
+  await tx.update(invitations).set({ acceptedAt: new Date() }).where(eq(invitations.id, invite.id));
 
-  await recordAuditSafe(db, {
+  await recordAuditSafe(tx as unknown as AppDb, {
     orgId: invite.orgId,
     actorUserId: userId,
     action: "team.invitation_accepted",
@@ -305,7 +336,10 @@ export async function acceptInvitationForUser(
     throw new ForbiddenError("This invitation was issued to a different email address");
   }
 
-  await applyInvitation(db, invite, userId);
+  await withOrgQuota(db, invite.orgId, async (tx) => {
+    if (invite.kind === "member") await assertTeamSeat(tx, invite.orgId, 0);
+    await applyInvitation(tx, invite, userId);
+  });
   return { orgId: invite.orgId };
 }
 
@@ -330,19 +364,21 @@ export async function registerInvitedUser(
 
   // Receiving the invitation proves control of the mailbox, so mark it verified.
   const passwordHash = await hashPassword(input.password);
-  const [user] = await db
-    .insert(users)
-    .values({
-      email: invite.email,
-      name: input.name.trim(),
-      passwordHash,
-      emailVerifiedAt: new Date(),
-    })
-    .returning({ id: users.id });
-  if (!user) throw new Error("Could not create account");
-
-  await applyInvitation(db, invite, user.id);
-  return { userId: user.id, orgId: invite.orgId };
+  return withOrgQuota(db, invite.orgId, async (tx) => {
+    if (invite.kind === "member") await assertTeamSeat(tx, invite.orgId, 0);
+    const [user] = await tx
+      .insert(users)
+      .values({
+        email: invite.email,
+        name: input.name.trim(),
+        passwordHash,
+        emailVerifiedAt: new Date(),
+      })
+      .returning({ id: users.id });
+    if (!user) throw new Error("Could not create account");
+    await applyInvitation(tx, invite, user.id);
+    return { userId: user.id, orgId: invite.orgId };
+  });
 }
 
 export type TeamMember = {

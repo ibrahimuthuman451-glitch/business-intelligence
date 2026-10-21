@@ -7,3 +7,5 @@ install.log
 .data/
 .pgbin/
 .pgdata/
+tsconfig.tsbuildinfo
+*.tsbuildinfo

@@ -4,6 +4,7 @@ import { getDb } from "@/db/client";
 import { getDashboardData, listInvoices } from "@/lib/finance-service";
 import { listDocuments } from "@/lib/documents";
 import { listTenders } from "@/lib/tenders";
+import { listTasks, taskSummary } from "@/lib/tasks";
 import { requirePageContext } from "@/lib/current-user";
 import { formatMoney } from "@/lib/money";
 import { formatDate } from "@/lib/format";
@@ -27,6 +28,10 @@ export default async function DashboardPage({
     const invoices = await listInvoices(db, org);
     const documents = await listDocuments(db, org.orgId);
     const tenders = await listTenders(db, org, { status: "open" });
+    const [tasks, taskCounts] = await Promise.all([
+      listTasks(db, org, { status: "open" }),
+      taskSummary(db, org),
+    ]);
     const maxMonth = Math.max(1, ...months.flatMap((month) => [month.revenueCents, month.expenseCents]));
 
     return (
@@ -162,6 +167,23 @@ export default async function DashboardPage({
                 <div className="row-between"><span className="muted small">Files stored privately</span><strong>{documents.length}</strong></div>
                 <div className="row-between mt-1"><span className="muted small">Awaiting review</span><strong>{documents.filter((doc) => doc.status === "uploaded" || doc.status === "in_review").length}</strong></div>
               </div>
+            </div>
+            <div className="card">
+              <div className="card-head"><h2>Your tasks</h2><Link className="small" href="/app/tasks">All tasks</Link></div>
+              <div className="card-pad">
+                <div className="row-between"><span className="muted small">Open</span><strong>{taskCounts.open}</strong></div>
+                <div className="row-between mt-1"><span className="muted small">Overdue</span><strong style={{ color: taskCounts.overdue ? "var(--red)" : undefined }}>{taskCounts.overdue}</strong></div>
+              </div>
+              {tasks.length > 0 ? (
+                <ul className="list card-pad" style={{ borderTop: "1px solid var(--line)" }}>
+                  {tasks.slice(0, 3).map((task) => (
+                    <li key={task.id}>
+                      <Link href={`/app/tasks/${task.id}`}>{task.title}</Link>
+                      <div className="tiny muted">{task.dueDate ? `Due ${formatDate(task.dueDate)}` : "No due date"}{task.overdue ? " · overdue" : ""}</div>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
             </div>
             <div className="card">
               <div className="card-head"><h2>Tender deadlines</h2><Link className="small" href="/app/tenders">Open</Link></div>

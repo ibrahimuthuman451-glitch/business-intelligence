@@ -31,6 +31,9 @@ export function getDb(): AppDb {
   if (globalForDb.__biDb?.db) return globalForDb.__biDb.db;
 
   const url = databaseUrl();
+  if (!url && process.env.NODE_ENV === "production") {
+    throw new Error("DATABASE_URL is required in production; refusing to use embedded PGlite");
+  }
   if (url) {
     const client = postgres(url, { max: 10, onnotice: () => {} });
     const db = drizzlePostgres(client, { schema }) as unknown as AppDb;

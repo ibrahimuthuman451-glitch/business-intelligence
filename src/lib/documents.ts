@@ -1,10 +1,17 @@
-import { and, count, desc, eq, gte, ilike, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, lte, sql } from "drizzle-orm";
 import type { AppDb } from "@/db/client";
-import { documentRequests, documents, subscriptionEntitlements } from "@/db/schema";
+import { documentRequests, documents } from "@/db/schema";
 import { recordAuditSafe } from "./audit";
 import { assertSameOrg, type OrgContext } from "./authz";
 import { AppError, ForbiddenError, NotFoundError, ValidationError } from "./errors";
 import { deleteUpload, readUpload, saveUpload, validateUpload } from "./storage";
+import { notifyOrgMembers, notifyUsers } from "./notifications";
+import { documentFulfilledEmail, documentRequestEmail, documentReviewedEmail } from "./email/templates";
+import { appUrl } from "./request";
+import { logServerError } from "./logger";
+import { assertEntitlement, withOrgQuota } from "./entitlements";
+import { consumeRateLimit } from "./rate-limit";
+import { scanUpload } from "./malware";
 
 export type UploadDocumentInput = {
   filename: string;
@@ -24,35 +31,6 @@ export async function createDocument(
   meta: { ipAddress?: string | null } = {},
 ): Promise<{ id: string }> {
   if (!ctx.permissions.includes("documents:write")) throw new ForbiddenError();
-  const [entitlement] = await db
-    .select({
-      enabled: subscriptionEntitlements.enabled,
-      limitValue: subscriptionEntitlements.limitValue,
-    })
-    .from(subscriptionEntitlements)
-    .where(
-      and(
-        eq(subscriptionEntitlements.orgId, ctx.orgId),
-        eq(subscriptionEntitlements.feature, "documents"),
-      ),
-    )
-    .limit(1);
-  if (entitlement && !entitlement.enabled) {
-    throw new AppError("Document storage is not enabled for your plan", 402, "entitlement_required");
-  }
-  if (entitlement?.limitValue != null) {
-    const [row] = await db
-      .select({ total: count() })
-      .from(documents)
-      .where(eq(documents.orgId, ctx.orgId));
-    if (Number(row?.total ?? 0) >= entitlement.limitValue) {
-      throw new AppError(
-        `Your plan allows ${entitlement.limitValue} documents. Remove files or upgrade to continue.`,
-        402,
-        "entitlement_limit",
-      );
-    }
-  }
 
   const category = input.category ?? "general";
   if (!CATEGORIES.has(category)) throw new ValidationError("Invalid document category");
@@ -61,25 +39,34 @@ export async function createDocument(
   }
 
   const validated = validateUpload(input);
-  const storageKey = await saveUpload(ctx.orgId, input.bytes, validated.extension);
+  const scan = await scanUpload(input.bytes, validated.safeFilename);
+  const storageKey = await saveUpload(ctx.orgId, input.bytes, validated.extension, validated.mimeType);
 
   try {
-    const [row] = await db
-      .insert(documents)
-      .values({
-        orgId: ctx.orgId,
-        uploadedBy: ctx.actor.user.id,
-        originalFilename: validated.safeFilename,
-        storageKey,
-        mimeType: validated.mimeType,
-        sizeBytes: validated.sizeBytes,
-        sha256: validated.sha256,
-        category,
-        periodStart: input.periodStart || null,
-        periodEnd: input.periodEnd || null,
-      })
-      .returning({ id: documents.id });
-    if (!row) throw new AppError("Could not save document", 500);
+    const row = await withOrgQuota(db, ctx.orgId, async (tx) => {
+      await assertEntitlement(tx, ctx.orgId, "documents_count", 1);
+      await assertEntitlement(tx, ctx.orgId, "document_storage_bytes", validated.sizeBytes);
+      const [inserted] = await tx
+        .insert(documents)
+        .values({
+          orgId: ctx.orgId,
+          uploadedBy: ctx.actor.user.id,
+          originalFilename: validated.safeFilename,
+          storageKey,
+          mimeType: validated.mimeType,
+          sizeBytes: validated.sizeBytes,
+          sha256: validated.sha256,
+          category,
+          periodStart: input.periodStart || null,
+          periodEnd: input.periodEnd || null,
+          scanStatus: scan.status,
+          scanDetails: scan.detail,
+          quarantinedAt: scan.status === "infected" ? new Date() : null,
+        })
+        .returning({ id: documents.id });
+      if (!inserted) throw new AppError("Could not save document", 500);
+      return inserted;
+    });
 
     await recordAuditSafe(db, {
       orgId: ctx.orgId,
@@ -139,6 +126,9 @@ export async function readAuthorizedDocument(
   meta: { ipAddress?: string | null } = {},
 ): Promise<{ filename: string; mimeType: string; bytes: Buffer }> {
   const row = await getDocumentRecord(db, ctx, documentId);
+  if (row.scanStatus === "infected" || row.quarantinedAt) {
+    throw new ForbiddenError("This document is quarantined and cannot be downloaded");
+  }
   const bytes = await readUpload(row.storageKey);
   await recordAuditSafe(db, {
     orgId: ctx.orgId,
@@ -170,6 +160,28 @@ export async function reviewDocument(
     })
     .where(and(eq(documents.id, row.id), eq(documents.orgId, ctx.orgId)));
 
+  if (row.uploadedBy !== ctx.actor.user.id) {
+    await notifyUsers(db, {
+      orgId: ctx.orgId,
+      userIds: [row.uploadedBy],
+      category: "reviews",
+      title: `Document ${input.status.replace("_", " ")}: ${row.originalFilename}`,
+      body: input.notes ?? null,
+      href: "/app/documents",
+      dedupeKey: `document-review:${row.id}:${input.status}:${Date.now()}`,
+      email: () =>
+        documentReviewedEmail({
+          organizationName: ctx.orgName,
+          filename: row.originalFilename,
+          status: input.status,
+          note: input.notes ?? null,
+          link: `${appUrl()}/app/documents`,
+        }),
+    }).catch((error) => {
+      logServerError("document_review_notification_failed", error);
+    });
+  }
+
   await recordAuditSafe(db, {
     orgId: ctx.orgId,
     actorUserId: ctx.actor.user.id,
@@ -186,7 +198,7 @@ export async function deleteDocument(db: AppDb, ctx: OrgContext, documentId: str
   const row = await getDocumentRecord(db, ctx, documentId);
   await db.delete(documents).where(and(eq(documents.id, row.id), eq(documents.orgId, ctx.orgId)));
   await deleteUpload(row.storageKey).catch((error) => {
-    console.error("Could not remove stored document", row.storageKey, error);
+    logServerError("document_storage_delete_failed", error, { documentId: row.id });
   });
   await recordAuditSafe(db, {
     orgId: ctx.orgId,
@@ -214,6 +226,15 @@ export async function createDocumentRequest(
 ): Promise<{ id: string }> {
   if (!ctx.permissions.includes("documents:write")) throw new ForbiddenError();
   if (input.title.trim().length < 3) throw new ValidationError("Enter a request title");
+  const rate = await consumeRateLimit(db, {
+    bucket: "document_requests",
+    key: ctx.orgId,
+    limit: 30,
+    windowSeconds: 3600,
+  });
+  if (!rate.allowed) {
+    throw new AppError("Too many document requests. Try again later.", 429, "rate_limited");
+  }
   const [row] = await db
     .insert(documentRequests)
     .values({
@@ -227,6 +248,25 @@ export async function createDocumentRequest(
     })
     .returning({ id: documentRequests.id });
   if (!row) throw new AppError("Could not create request", 500);
+
+  await notifyOrgMembers(db, ctx.orgId, {
+    category: "documents",
+    title: `Document requested: ${input.title.trim()}`,
+    body: input.dueDate ? `Due ${input.dueDate}.` : "No due date set.",
+    href: "/app/documents/requests",
+    dedupeKey: `document-request:${row.id}`,
+    excludeUserIds: [ctx.actor.user.id],
+    email: () =>
+      documentRequestEmail({
+        organizationName: ctx.orgName,
+        title: input.title.trim(),
+        dueDate: input.dueDate ?? null,
+        link: `${appUrl()}/app/documents/requests`,
+      }),
+  }).catch((error) => {
+    logServerError("document_request_notification_failed", error);
+  });
+
   await recordAuditSafe(db, {
     orgId: ctx.orgId,
     actorUserId: ctx.actor.user.id,
@@ -253,9 +293,13 @@ export async function fulfilDocumentRequest(
   documentId: string,
 ): Promise<void> {
   if (!ctx.permissions.includes("documents:write")) throw new ForbiddenError();
-  await getDocumentRecord(db, ctx, documentId);
+  const documentRow = await getDocumentRecord(db, ctx, documentId);
   const [request] = await db
-    .select({ id: documentRequests.id })
+    .select({
+      id: documentRequests.id,
+      title: documentRequests.title,
+      requestedBy: documentRequests.requestedBy,
+    })
     .from(documentRequests)
     .where(and(eq(documentRequests.id, requestId), eq(documentRequests.orgId, ctx.orgId)))
     .limit(1);
@@ -265,6 +309,27 @@ export async function fulfilDocumentRequest(
     .update(documentRequests)
     .set({ status: "fulfilled", documentId, updatedAt: new Date() })
     .where(and(eq(documentRequests.id, request.id), eq(documentRequests.orgId, ctx.orgId)));
+
+  if (request.requestedBy !== ctx.actor.user.id) {
+    await notifyUsers(db, {
+      orgId: ctx.orgId,
+      userIds: [request.requestedBy],
+      category: "documents",
+      title: `Document request fulfilled: ${request.title}`,
+      body: `${documentRow.originalFilename} was uploaded.`,
+      href: "/app/documents",
+      dedupeKey: `document-request-fulfilled:${request.id}`,
+      email: () =>
+        documentFulfilledEmail({
+          organizationName: ctx.orgName,
+          title: request.title,
+          filename: documentRow.originalFilename,
+          link: `${appUrl()}/app/documents`,
+        }),
+    }).catch((error) => {
+      logServerError("document_fulfilled_notification_failed", error);
+    });
+  }
 
   await recordAuditSafe(db, {
     orgId: ctx.orgId,

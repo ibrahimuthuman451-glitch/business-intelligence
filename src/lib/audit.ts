@@ -1,5 +1,6 @@
 import type { AppDb } from "@/db/client";
 import { auditEvents } from "@/db/schema";
+import { logServerError } from "./logger";
 
 export type AuditInput = {
   orgId?: string | null;
@@ -30,6 +31,6 @@ export async function recordAuditSafe(db: AppDb, input: AuditInput): Promise<voi
   try {
     await recordAudit(db, input);
   } catch (error) {
-    console.error("Failed to write audit event", input.action, error);
+    logServerError("audit_write_failed", error, { action: input.action });
   }
 }

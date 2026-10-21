@@ -7,7 +7,7 @@ import { getTender } from "@/lib/tenders";
 import { formatDate, formatDateTime } from "@/lib/format";
 import { formatMoney } from "@/lib/money";
 import { Alert, Badge, PageHeader } from "@/components/ui";
-import { assessTenderAction, createChecklistAction, toggleChecklistItemAction } from "../../actions";
+import { assessTenderAction, createChecklistAction, saveTenderAction, toggleChecklistItemAction } from "../../actions";
 import { AppError } from "@/lib/errors";
 
 export const metadata: Metadata = { title: "Tender" };
@@ -43,7 +43,17 @@ export default async function TenderDetailPage({
         eyebrow={org.orgName}
         title={tender.title}
         description={<>{tender.buyer ?? "Buyer not recorded"} · ref <span className="mono">{tender.reference}</span></>}
-        actions={<Link className="btn secondary" href="/app/tenders">All tenders</Link>}
+        actions={<>
+          <Link className="btn secondary" href="/app/tenders">All tenders</Link>
+          {canWrite ? (
+            <form action={saveTenderAction}>
+              <input type="hidden" name="returnTo" value={`/app/tenders/${tender.id}`} />
+              <input type="hidden" name="tenderId" value={tender.id} />
+              <input type="hidden" name="saved" value={tender.match?.saved ? "false" : "true"} />
+              <button className="btn" type="submit">{tender.match?.saved ? "Remove from saved" : "Save opportunity"}</button>
+            </form>
+          ) : null}
+        </>}
       />
       {query.ok ? <Alert tone="success">{query.ok}</Alert> : null}
       {query.error ? <Alert tone="error">{query.error}</Alert> : null}

@@ -1,0 +1,7 @@
+Invoice Number,Total,Date,Customer
+CSV-M-1,118000,2026-03-02,"Sample, Inc."
+
+CSV-M-1,118000,2026-03-02,"Sample, Inc."
+CSV-M-2,not-a-number,2026-03-03,Broken
+CSV-M-3,-5000,2026-03-04,Credit note
+,10000,2026-03-05,Missing reference

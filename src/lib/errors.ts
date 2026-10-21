@@ -1,4 +1,6 @@
 /** Error carrying an HTTP status and a message that is safe to show to users. */
+import { logServerError } from "./logger";
+
 export class AppError extends Error {
   readonly status: number;
   readonly code: string;
@@ -59,6 +61,7 @@ export function toErrorResponse(error: unknown): { status: number; body: { error
   if (error instanceof AppError) {
     return { status: error.status, body: { error: error.message, code: error.code } };
   }
-  console.error("Unhandled application error:", error);
+  // Redacted logging: never write SQL parameters (financial data) to logs.
+  logServerError("unhandled_application_error", error);
   return { status: 500, body: { error: "Something went wrong. Please try again.", code: "internal_error" } };
 }

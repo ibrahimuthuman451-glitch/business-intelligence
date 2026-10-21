@@ -12,6 +12,7 @@ import { recordAuditSafe } from "./audit";
 import type { OrgContext } from "./authz";
 import { AppError, ConflictError, ForbiddenError, NotFoundError, ValidationError } from "./errors";
 import { isUniqueViolation } from "./db-errors";
+import { assertEntitlement, withOrgQuota } from "./entitlements";
 
 export type TenderMatchInput = {
   title: string;
@@ -246,6 +247,7 @@ export type TenderFilters = {
   category?: string;
   region?: string;
   status?: "open" | "closed" | "all";
+  saved?: boolean;
 };
 
 export async function listTenders(db: AppDb, ctx: OrgContext, filters: TenderFilters = {}) {
@@ -281,6 +283,7 @@ export async function listTenders(db: AppDb, ctx: OrgContext, filters: TenderFil
       verifiedAt: tenders.verifiedAt,
       matchScore: tenderMatches.relevanceScore,
       eligibility: tenderMatches.eligibility,
+      saved: tenderMatches.saved,
       checklistId: bidChecklists.id,
       checklistStatus: bidChecklists.status,
     })
@@ -297,8 +300,9 @@ export async function listTenders(db: AppDb, ctx: OrgContext, filters: TenderFil
     .orderBy(asc(tenders.closesAt))
     .limit(200);
 
+  const filtered = filters.saved ? rows.filter((row) => row.saved) : rows;
   const now = Date.now();
-  return rows.map((row) => ({
+  return filtered.map((row) => ({
     ...row,
     daysLeft: Math.ceil((row.closesAt.getTime() - now) / 86_400_000),
     closed: row.closesAt.getTime() <= now,
@@ -509,3 +513,49 @@ export async function toggleChecklistItem(
   });
 }
 
+
+export async function setTenderSaved(
+  db: AppDb,
+  ctx: OrgContext,
+  tenderId: string,
+  saved: boolean,
+): Promise<void> {
+  if (!ctx.permissions.includes("tenders:write")) throw new ForbiddenError();
+  const [tender] = await db
+    .select({ id: tenders.id })
+    .from(tenders)
+    .where(
+      and(
+        eq(tenders.id, tenderId),
+        or(eq(tenders.orgId, ctx.orgId), eq(tenders.provenance, "sample")),
+      ),
+    )
+    .limit(1);
+  if (!tender) throw new NotFoundError("Tender not found");
+
+  await withOrgQuota(db, ctx.orgId, async (tx) => {
+    const [existing] = await tx
+      .select({ saved: tenderMatches.saved })
+      .from(tenderMatches)
+      .where(and(eq(tenderMatches.tenderId, tenderId), eq(tenderMatches.orgId, ctx.orgId)))
+      .limit(1);
+    if (saved && !existing?.saved) {
+      await assertEntitlement(tx, ctx.orgId, "saved_tenders", 1);
+    }
+    await tx
+      .insert(tenderMatches)
+      .values({ tenderId, orgId: ctx.orgId, relevanceScore: 0, eligibility: "unknown", saved })
+      .onConflictDoUpdate({
+        target: [tenderMatches.tenderId, tenderMatches.orgId],
+        set: { saved, updatedAt: new Date() },
+      });
+  });
+
+  await recordAuditSafe(db, {
+    orgId: ctx.orgId,
+    actorUserId: ctx.actor.user.id,
+    action: saved ? "tender.saved" : "tender.unsaved",
+    entityType: "tender",
+    entityId: tenderId,
+  });
+}

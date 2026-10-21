@@ -40,6 +40,7 @@ export async function createTestContext(): Promise<TestContext> {
   const uploadDir = mkdtempSync(path.join(tmpdir(), "bi-docs-"));
   process.env.UPLOAD_DIR = uploadDir;
   process.env.MAX_UPLOAD_BYTES = String(2 * 1024 * 1024);
+  process.env.MAIL_OUTBOX_DIR = path.join(uploadDir, "mail");
 
   const pgAdminUrl = process.env.TEST_DATABASE_URL;
   const context = pgAdminUrl ? await createPostgresContext(pgAdminUrl) : await createPgliteContext();
@@ -71,7 +72,6 @@ async function createPgliteContext(): Promise<Omit<TestContext, "uploadDir" | "c
 async function createPostgresContext(
   adminUrl: string,
 ): Promise<Omit<TestContext, "uploadDir" | "cleanup"> & { cleanup: () => Promise<void> }> {
-  const base = new URL(adminUrl);
   const databaseName = `bi_test_${process.pid}_${Date.now()}_${(pgCounter += 1)}`;
   const admin = postgres(adminUrl, { max: 1, onnotice: () => {} });
   await admin.unsafe(`create database "${databaseName}"`);

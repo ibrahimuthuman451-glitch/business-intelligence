@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
 import { AppError } from "./errors";
+import { logServerError } from "./logger";
 
 export type RequestMeta = { ipAddress: string | null; userAgent: string | null };
 
@@ -35,6 +36,6 @@ export async function deliverEmail(input: { to: string; subject: string; link: s
 
 export function describeError(error: unknown): string {
   if (error instanceof AppError) return error.message;
-  console.error(error);
+  logServerError("request_error", error);
   return "Something went wrong. Please try again.";
 }

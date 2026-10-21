@@ -1,12 +1,13 @@
 import type { Metadata } from "next";
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db/client";
-import { businessProfiles, organizations, subscriptionEntitlements } from "@/db/schema";
+import { businessProfiles, organizations } from "@/db/schema";
 import { requirePageContext } from "@/lib/current-user";
-import { formatDate } from "@/lib/format";
+import { formatDate, bytes } from "@/lib/format";
 import { Alert, Badge, PageHeader } from "@/components/ui";
-import { changePasswordAction, updateProfileAction } from "../actions";
+import { changePasswordAction, createOrganizationAction, updateProfileAction } from "../actions";
 import { serviceUnavailable } from "@/lib/page-guards";
+import { entitlementSnapshot } from "@/lib/entitlements";
 
 export const metadata: Metadata = { title: "Settings" };
 export const dynamic = "force-dynamic";
@@ -19,7 +20,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     const db = getDb();
     const [profile] = await db.select().from(businessProfiles).where(eq(businessProfiles.orgId, org.orgId)).limit(1);
     const [organization] = await db.select().from(organizations).where(eq(organizations.id, org.orgId)).limit(1);
-    const entitlements = await db.select().from(subscriptionEntitlements).where(eq(subscriptionEntitlements.orgId, org.orgId));
+    const snapshot = await entitlementSnapshot(db, org.orgId);
     return (
       <>
         <PageHeader eyebrow={org.orgName} title="Settings" description="Business profile, tender matching signals and account security." />
@@ -70,11 +71,33 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
               </form>
             </div>
             <div className="card">
-              <div className="card-head"><h2>Plan entitlements</h2></div>
-              <ul className="list card-pad">{entitlements.map((entitlement) => (
-                <li key={entitlement.id} className="row-between"><span className="small strong">{entitlement.feature.replace("_", " ")}</span><span className="row">{entitlement.limitValue != null ? <span className="tiny muted">limit {entitlement.limitValue}</span> : null}<Badge value={entitlement.enabled ? "active" : "revoked"} label={entitlement.enabled ? "enabled" : "disabled"} /></span></li>
-              ))}</ul>
+              <div className="card-head"><h2>Plan & usage</h2><Badge value={snapshot.plan} /></div>
+              <div className="table-wrap"><table className="data">
+                <thead><tr><th>Limit</th><th>Used</th><th>Included</th></tr></thead>
+                <tbody>
+                  <tr><td>Team members</td><td>{snapshot.usage.teamMembers} (+{snapshot.usage.pendingInvitations} pending)</td><td>{snapshot.limits.teamMembers}</td></tr>
+                  <tr><td>Documents</td><td>{snapshot.usage.documents}</td><td>{snapshot.limits.documentsCount}</td></tr>
+                  <tr><td>Storage</td><td>{bytes(snapshot.usage.storageBytes)}</td><td>{bytes(snapshot.limits.documentStorageBytes)}</td></tr>
+                  <tr><td>Saved opportunities</td><td>{snapshot.usage.savedTenders}</td><td>{snapshot.limits.savedTenders}</td></tr>
+                  <tr><td>Advanced exports</td><td>{snapshot.limits.advancedExports ? "Enabled" : "Not included"}</td><td>{snapshot.limits.advancedExports ? "Yes" : "No"}</td></tr>
+                  <tr><td>AI credits</td><td>No AI feature enabled</td><td>{snapshot.limits.aiCredits}</td></tr>
+                </tbody>
+              </table></div>
+              <p className="tiny muted" style={{ padding: "0 1.25rem 1rem" }}>Limits are enforced server-side inside a transaction; direct API calls cannot bypass them.</p>
             </div>
+            {canManage ? (
+              <div className="card">
+                <div className="card-head"><h2>Create another business</h2></div>
+                <form action={createOrganizationAction} className="card-pad">
+                  <div className="field"><label htmlFor="newOrgName">Organization name</label><input id="newOrgName" name="name" required minLength={2} /></div>
+                  <div className="form-grid">
+                    <div className="field"><label htmlFor="newOrgKind">Type</label><select id="newOrgKind" name="kind" defaultValue="business"><option value="business">Business</option><option value="accounting_firm">Accounting firm</option></select></div>
+                    <div className="field"><label htmlFor="newOrgCurrency">Currency</label><select id="newOrgCurrency" name="currency" defaultValue="RWF"><option value="RWF">RWF</option><option value="USD">USD</option><option value="EUR">EUR</option></select></div>
+                  </div>
+                  <button className="btn secondary" type="submit">Create organization</button>
+                </form>
+              </div>
+            ) : null}
           </div>
         </div>
       </>
