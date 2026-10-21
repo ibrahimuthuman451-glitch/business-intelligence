@@ -1,8 +1,10 @@
 import type { NextRequest } from "next/server";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db/client";
+import { advisorAccess } from "@/db/schema";
 import { authorizeOrg } from "@/lib/authz";
-import { getCurrentActor, resolveActiveOrg } from "@/lib/current-user";
-import { toErrorResponse, ValidationError } from "@/lib/errors";
+import { actorFromRequest, activeOrgFromRequest } from "@/lib/request-auth";
+import { toErrorResponse, ForbiddenError, ValidationError } from "@/lib/errors";
 import { parseTabularFile, suggestMapping } from "@/lib/reconciliation";
 import { maxUploadBytes } from "@/lib/storage";
 
@@ -13,11 +15,25 @@ export async function POST(request: NextRequest) {
       const expected = new URL(request.url).origin;
       if (origin !== expected) throw new ValidationError("Cross-origin request rejected");
     }
-    const actor = await getCurrentActor();
+    const actor = await actorFromRequest(request);
     if (!actor) return Response.json({ error: "Not signed in" }, { status: 401 });
-    const base = await resolveActiveOrg(actor);
-    if (!base) return Response.json({ error: "No organization access" }, { status: 403 });
-    const org = await authorizeOrg(getDb(), actor, base.orgId, "recon:write");
+
+    const db = getDb();
+    const grants = await db
+      .select({ orgId: advisorAccess.clientOrgId })
+      .from(advisorAccess)
+      .where(
+        and(eq(advisorAccess.advisorUserId, actor.user.id), eq(advisorAccess.status, "active")),
+      );
+    const accessible = [
+      ...actor.memberships.map((membership) => membership.orgId),
+      ...grants.map((grant) => grant.orgId),
+    ];
+    const preferred = activeOrgFromRequest(request);
+    if (preferred && !accessible.includes(preferred)) throw new ForbiddenError();
+    const orgId = preferred ?? accessible[0];
+    if (!orgId) return Response.json({ error: "No organization access" }, { status: 403 });
+    const org = await authorizeOrg(db, actor, orgId, "recon:write");
 
     const form = await request.formData();
     const file = form.get("file");

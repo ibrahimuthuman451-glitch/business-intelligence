@@ -22,6 +22,9 @@ export async function createMemberInvitation(
   meta: { ipAddress?: string | null } = {},
 ): Promise<{ id: string; token: string }> {
   if (!ctx.permissions.includes("team:manage")) throw new ForbiddenError();
+  if (!ctx.actor.user.emailVerifiedAt) {
+    throw new ForbiddenError("Verify your email address before inviting people");
+  }
   if (!INVITABLE_ROLES.includes(input.role)) throw new ValidationError("Invalid role");
   if (!ctx.permissions.includes("billing:manage") && input.role !== "advisor") {
     throw new ForbiddenError("Only an owner can invite staff");
@@ -76,6 +79,9 @@ export async function grantAdvisorAccess(
   meta: { ipAddress?: string | null } = {},
 ): Promise<{ id: string; invitationId: string; token: string }> {
   if (!ctx.permissions.includes("team:manage")) throw new ForbiddenError();
+  if (!ctx.actor.user.emailVerifiedAt) {
+    throw new ForbiddenError("Verify your email address before authorizing an advisor");
+  }
   const advisorEmail = normalizeEmail(input.advisorEmail);
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(advisorEmail)) {
     throw new ValidationError("Enter a valid advisor email");
@@ -211,28 +217,32 @@ async function applyInvitation(
   userId: string,
 ): Promise<void> {
   await db.transaction(async (tx) => {
-    const [membership] = await tx
-      .select({ id: memberships.id })
-      .from(memberships)
-      .where(and(eq(memberships.orgId, invite.orgId), eq(memberships.userId, userId)))
-      .limit(1);
+    // Advisor invitations authorize advisor access only. They must never create
+    // a membership, otherwise revoking the grant would leave access behind.
+    if (invite.kind === "member") {
+      const [membership] = await tx
+        .select({ id: memberships.id })
+        .from(memberships)
+        .where(and(eq(memberships.orgId, invite.orgId), eq(memberships.userId, userId)))
+        .limit(1);
 
-    if (membership) {
-      await tx
-        .update(memberships)
-        .set({
+      if (membership) {
+        await tx
+          .update(memberships)
+          .set({
+            role: invite.role as "staff" | "advisor" | "firm_admin",
+            status: "active",
+            updatedAt: new Date(),
+          })
+          .where(eq(memberships.id, membership.id));
+      } else {
+        await tx.insert(memberships).values({
+          orgId: invite.orgId,
+          userId,
           role: invite.role as "staff" | "advisor" | "firm_admin",
           status: "active",
-          updatedAt: new Date(),
-        })
-        .where(eq(memberships.id, membership.id));
-    } else {
-      await tx.insert(memberships).values({
-        orgId: invite.orgId,
-        userId,
-        role: invite.role as "staff" | "advisor" | "firm_admin",
-        status: "active",
-      });
+        });
+      }
     }
 
     if (invite.kind === "advisor") {

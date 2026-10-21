@@ -77,12 +77,20 @@ export function can(role: string, permission: Permission): boolean {
 
 export type Actor = {
   user: AuthenticatedUser;
-  memberships: { orgId: string; role: string; status: string; orgName: string; orgKind: string }[];
+  memberships: {
+    orgId: string;
+    role: string;
+    status: string;
+    orgName: string;
+    orgKind: string;
+    orgPlan: string;
+  }[];
 };
 
 export type OrgContext = {
   orgId: string;
   orgName: string;
+  plan: string;
   role: string;
   permissions: Permission[];
   viaAdvisorAccess: boolean;
@@ -110,6 +118,7 @@ export async function loadActor(db: AppDb, userId: string): Promise<Actor | null
       status: memberships.status,
       orgName: organizations.name,
       orgKind: organizations.kind,
+      orgPlan: organizations.plan,
     })
     .from(memberships)
     .innerJoin(organizations, eq(organizations.id, memberships.orgId))
@@ -129,6 +138,7 @@ export async function authorizeOrg(
     return {
       orgId,
       orgName: membership.orgName,
+      plan: membership.orgPlan,
       role: membership.role,
       permissions: permissionsFor(membership.role),
       viaAdvisorAccess: false,
@@ -151,7 +161,7 @@ export async function authorizeOrg(
 
   if (grant && can("advisor", permission)) {
     const [org] = await db
-      .select({ name: organizations.name })
+      .select({ name: organizations.name, plan: organizations.plan })
       .from(organizations)
       .where(eq(organizations.id, orgId))
       .limit(1);
@@ -159,6 +169,7 @@ export async function authorizeOrg(
     return {
       orgId,
       orgName: org.name,
+      plan: org.plan,
       role: "advisor",
       permissions: permissionsFor("advisor"),
       viaAdvisorAccess: true,

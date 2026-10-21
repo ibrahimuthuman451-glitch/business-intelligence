@@ -14,6 +14,7 @@ import { recordAuditSafe } from "./audit";
 import { AppError, ConflictError, UnauthorizedError, ValidationError } from "./errors";
 import { hashToken, normalizeEmail, randomToken, slugify } from "./ids";
 import { fakeVerify, hashPassword, verifyPassword } from "./password";
+import { isUniqueViolation } from "./db-errors";
 
 const SESSION_TTL_DAYS = Number(process.env.SESSION_TTL_DAYS ?? 30);
 const MAX_FAILED_LOGINS = 8;
@@ -81,21 +82,55 @@ export async function registerUser(
   const passwordHash = await hashPassword(input.password);
   const slug = await uniqueSlug(db, organizationName);
 
+  try {
+    return await createRegisteredWorkspace(db, {
+      email,
+      name,
+      passwordHash,
+      organizationName,
+      organizationKind: input.organizationKind ?? "business",
+      countryCode: (input.countryCode ?? "RW").toUpperCase(),
+      currency: (input.currency ?? "RWF").toUpperCase(),
+      slug,
+      meta,
+    });
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      throw new ConflictError("An account with this email already exists");
+    }
+    throw error;
+  }
+}
+
+async function createRegisteredWorkspace(
+  db: AppDb,
+  input: {
+    email: string;
+    name: string;
+    passwordHash: string;
+    organizationName: string;
+    organizationKind: "business" | "accounting_firm";
+    countryCode: string;
+    currency: string;
+    slug: string;
+    meta: RequestMeta;
+  },
+): Promise<RegisterResult> {
   const result = await db.transaction(async (tx): Promise<RegisterResult> => {
     const [user] = await tx
       .insert(users)
-      .values({ email, name, passwordHash })
+      .values({ email: input.email, name: input.name, passwordHash: input.passwordHash })
       .returning({ id: users.id });
     if (!user) throw new AppError("Could not create account", 500);
 
     const [org] = await tx
       .insert(organizations)
       .values({
-        name: organizationName,
-        slug,
-        kind: input.organizationKind ?? "business",
-        countryCode: (input.countryCode ?? "RW").toUpperCase(),
-        defaultCurrency: (input.currency ?? "RWF").toUpperCase(),
+        name: input.organizationName,
+        slug: input.slug,
+        kind: input.organizationKind,
+        countryCode: input.countryCode,
+        defaultCurrency: input.currency,
         createdBy: user.id,
       })
       .returning({ id: organizations.id, defaultCurrency: organizations.defaultCurrency });
@@ -109,7 +144,7 @@ export async function registerUser(
     });
     await tx.insert(businessProfiles).values({
       orgId: org.id,
-      legalName: organizationName,
+      legalName: input.organizationName,
       currency: org.defaultCurrency,
     });
     await tx.insert(subscriptionEntitlements).values([
@@ -134,11 +169,11 @@ export async function registerUser(
   await recordAuditSafe(db, {
     orgId: result.organizationId,
     actorUserId: result.userId,
-    actorEmail: email,
+    actorEmail: input.email,
     action: "auth.registered",
     entityType: "user",
     entityId: result.userId,
-    ipAddress: meta.ipAddress,
+    ipAddress: input.meta.ipAddress,
   });
 
   return result;

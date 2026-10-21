@@ -119,12 +119,24 @@ export function parseAmountCell(value: string): number | null {
   if (!value) return null;
   const normalized = value.replace(/[^\d.,-]/g, "");
   if (!normalized || normalized === "-") return null;
-  // Treat both "1,000.50" and "1.000,50" sensibly.
-  let candidate = normalized;
   const lastComma = normalized.lastIndexOf(",");
   const lastDot = normalized.lastIndexOf(".");
-  if (lastComma > lastDot) candidate = normalized.replace(/\./g, "").replace(",", ".");
-  else candidate = normalized.replace(/,/g, "");
+
+  let candidate: string;
+  if (lastComma > -1 && lastDot > -1) {
+    candidate =
+      lastComma > lastDot
+        ? normalized.replace(/\./g, "").replace(/,/g, ".")
+        : normalized.replace(/,/g, "");
+  } else if (lastComma > -1) {
+    // "1,250" is thousands; "1,25" is a decimal comma.
+    candidate = /^\d{1,3}(,\d{3})+$/.test(normalized)
+      ? normalized.replace(/,/g, "")
+      : normalized.replace(/,/g, ".");
+  } else {
+    candidate = normalized;
+  }
+
   const number = Number(candidate);
   return Number.isFinite(number) ? number : null;
 }

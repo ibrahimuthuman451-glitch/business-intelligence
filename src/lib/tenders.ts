@@ -11,6 +11,7 @@ import {
 import { recordAuditSafe } from "./audit";
 import type { OrgContext } from "./authz";
 import { AppError, ConflictError, ForbiddenError, NotFoundError, ValidationError } from "./errors";
+import { isUniqueViolation } from "./db-errors";
 
 export type TenderMatchInput = {
   title: string;
@@ -233,12 +234,7 @@ export async function importTender(
     });
     return row;
   } catch (error) {
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      (error as { code?: string }).code === "23505"
-    ) {
+    if (isUniqueViolation(error)) {
       throw new ConflictError("A tender with that reference already exists");
     }
     throw error;

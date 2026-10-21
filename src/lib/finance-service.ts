@@ -15,6 +15,7 @@ import type { OrgContext } from "./authz";
 import { AppError, ConflictError, ForbiddenError, NotFoundError, ValidationError } from "./errors";
 import { computeFinancialSummary, deriveInvoiceStatus } from "./finance";
 import { computeInvoiceTotals, formatMinor, MoneyError, parseMoneyToMinor } from "./money";
+import { isUniqueViolation } from "./db-errors";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -461,14 +462,6 @@ async function nextInvoiceNumber(db: AppDb, orgId: string): Promise<string> {
   return `INV-${year}-${String((row?.total ?? 0) + 1).padStart(4, "0")}`;
 }
 
-function isUniqueViolation(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "23505"
-  );
-}
 
 
 export async function getInvoice(db: AppDb, ctx: OrgContext, invoiceId: string) {

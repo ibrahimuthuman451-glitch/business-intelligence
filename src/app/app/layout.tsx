@@ -19,6 +19,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         isPlatformAdmin={actor.user.isPlatformAdmin}
       />
       <main className="main">
+        {org.plan === "demo" ? (
+          <Alert tone="warn">
+            <strong>Demo workspace.</strong> Records here are seeded sample data. Create your own
+            organization to work with real books.
+          </Alert>
+        ) : null}
         {unverified ? (
           <Alert tone="warn">
             Your email is not verified yet. Check the verification link sent to{" "}

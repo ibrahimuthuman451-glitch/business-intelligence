@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { documents } from "@/db/schema";
 import { authorizeOrg } from "@/lib/authz";
-import { getCurrentActor } from "@/lib/current-user";
+import { actorFromRequest } from "@/lib/request-auth";
 import { readAuthorizedDocument } from "@/lib/documents";
 import { toErrorResponse } from "@/lib/errors";
 
@@ -18,7 +18,7 @@ export async function GET(
 ) {
   const { id } = await context.params;
   try {
-    const actor = await getCurrentActor();
+    const actor = await actorFromRequest(request);
     if (!actor) {
       return Response.json({ error: "Sign in to download this document" }, { status: 401 });
     }
