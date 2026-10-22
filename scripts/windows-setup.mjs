@@ -211,12 +211,21 @@ async function main() {
   const s3AccessKey = await ask("S3 access key ID", { defaultValue: existing.S3_ACCESS_KEY_ID ?? "", secret: true });
   const s3SecretKey = await ask("S3 secret access key", { defaultValue: existing.S3_SECRET_ACCESS_KEY ?? "", secret: true });
 
-  const smtpUrl = await ask("SMTP URL (Brevo example: smtp://login:key@smtp-relay.brevo.com:587)", {
-    defaultValue: existing.SMTP_URL ?? "", required: true, secret: true,
-  });
-  validateUrl(smtpUrl, "SMTP_URL", ["smtp:", "smtps:"]);
-  const emailFrom = await ask("Verified sender (e.g. Ledgerline <no-reply@your-domain>)", { defaultValue: existing.EMAIL_FROM ?? "" });
-  const verifyEmailTo = await ask("Your mailbox for one SMTP verification email (optional)", { defaultValue: existing.VERIFY_EMAIL_TO ?? "", required: false });
+  const smtpUrl = await ask(
+    "SMTP URL (Brevo; leave blank to disable email for this demo)",
+    { defaultValue: existing.SMTP_URL ?? "", required: false, secret: true },
+  );
+  if (smtpUrl) validateUrl(smtpUrl, "SMTP_URL", ["smtp:", "smtps:"]);
+  const emailFrom = smtpUrl
+    ? await ask("Verified sender (e.g. Ledgerline <no-reply@your-domain>)", {
+        defaultValue: existing.EMAIL_FROM ?? "", required: true,
+      })
+    : "";
+  const verifyEmailTo = smtpUrl
+    ? await ask("Your mailbox for one SMTP verification email (optional)", {
+        defaultValue: existing.VERIFY_EMAIL_TO ?? "", required: false,
+      })
+    : "";
   const mfaRequiredFor = await ask("MFA_REQUIRED_FOR policy", { defaultValue: existing.MFA_REQUIRED_FOR ?? "platform_admin" });
 
   const mfaKey = existing.MFA_ENCRYPTION_KEY || randomBytes(32).toString("base64");
@@ -236,7 +245,7 @@ async function main() {
     S3_ACCESS_KEY_ID: s3AccessKey,
     S3_SECRET_ACCESS_KEY: s3SecretKey,
     S3_FORCE_PATH_STYLE: "true",
-    EMAIL_TRANSPORT: "smtp",
+    EMAIL_TRANSPORT: smtpUrl ? "smtp" : "disabled",
     SMTP_URL: smtpUrl,
     EMAIL_FROM: emailFrom,
     VERIFY_EMAIL_TO: verifyEmailTo,
@@ -274,7 +283,7 @@ async function main() {
 
   run("Verifying private S3 storage", NPM, ["run", "verify:s3"], values);
 
-  if (!args.has("--skip-smtp") && verifyEmailTo) {
+  if (smtpUrl && !args.has("--skip-smtp") && verifyEmailTo) {
     run("Sending SMTP verification", NPM, ["run", "verify:smtp"], {
       ...values, EMAIL_TRANSPORT: "smtp", VERIFY_EMAIL_TO: verifyEmailTo,
     });
@@ -315,7 +324,7 @@ async function main() {
     S3_ACCESS_KEY_ID: s3AccessKey,
     S3_SECRET_ACCESS_KEY: s3SecretKey,
     S3_FORCE_PATH_STYLE: "true",
-    EMAIL_TRANSPORT: "smtp",
+    EMAIL_TRANSPORT: smtpUrl ? "smtp" : "disabled",
     SMTP_URL: smtpUrl,
     EMAIL_FROM: emailFrom,
     MFA_ENCRYPTION_KEY: mfaKey,

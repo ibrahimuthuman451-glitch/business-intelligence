@@ -31,7 +31,7 @@ The script asks for:
 - Vercel project name and public app URL (default `https://<project>.vercel.app`)
 - Supabase transaction pooler URL (runtime) and session pooler URL (migrations)
 - S3 bucket, region, endpoint, access key and secret
-- Brevo SMTP URL and verified `EMAIL_FROM`
+- Brevo SMTP URL and verified `EMAIL_FROM` (you may leave SMTP blank for a demo; registration will be disabled)
 - Optional mailbox for one SMTP verification message
 - MFA policy
 
