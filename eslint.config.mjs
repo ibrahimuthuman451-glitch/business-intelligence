@@ -2,7 +2,7 @@ import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: [".next/**", "node_modules/**", "drizzle/**", ".data/**", "next-env.d.ts"] },
+  { ignores: [".next/**", "node_modules/**", "drizzle/**", ".data/**", ".cline-home/**", ".clamav/**", ".pgclient/**", "scripts/windows-setup.mjs", "next-env.d.ts"] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

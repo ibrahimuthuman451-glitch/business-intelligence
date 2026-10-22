@@ -17,6 +17,7 @@
     "db:seed": "tsx scripts/seed.ts",
     "demo:reset": "tsx scripts/reset-demo.ts",
     "jobs:run": "tsx scripts/run-jobs.ts",
+    "deploy:windows": "node scripts/windows-setup.mjs",
     "storage:audit": "tsx scripts/storage-audit.ts",
     "verify:smtp": "tsx scripts/verify-smtp.ts",
     "verify:s3": "tsx scripts/verify-s3.ts",

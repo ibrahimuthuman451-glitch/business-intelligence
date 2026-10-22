@@ -11,3 +11,4 @@ tsconfig.tsbuildinfo
 *.tsbuildinfo
 .clamav/
 .pgclient/
+.env.deploy.local
